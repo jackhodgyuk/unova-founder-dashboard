@@ -57,9 +57,13 @@
         <section id="loginView" class="login-view">
           <form id="loginForm" class="login-panel">
             <span class="login-mark">UN</span>
-            <p>Firebase Access</p>
+            <p>Firebase Password Access</p>
             <h2>Secure Dashboard</h2>
-            <button id="firebaseLoginButton" class="firebase-login hidden" type="button">Continue with Google</button>
+            <label for="loginEmail">Email or Username</label>
+            <input id="loginEmail" name="email" type="text" autocomplete="username" required>
+            <label for="loginPassword">Password</label>
+            <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+            <button id="firebaseLoginButton" type="submit">Log In</button>
             <p id="loginError"></p>
           </form>
         </section>
@@ -129,73 +133,4 @@
           </section>
 
           <section id="actionsView" class="actions-view hidden">
-            <div class="section-heading">
-              <h3>Recent Actions</h3>
-              <span id="actionsQueueCount">Queue 0</span>
-            </div>
-            <div id="actionsList" class="actions-list"></div>
-          </section>
-
-          <section id="priorityView" class="actions-view hidden">
-            <div class="section-heading">
-              <h3>Priority Queue</h3>
-              <span>Discord role linked</span>
-            </div>
-            <div class="priority-grid">
-              <form id="priorityRoleForm" class="config-panel">
-                <h4>Priority Role</h4>
-                <label for="priorityRoleId">Discord Role ID</label>
-                <input id="priorityRoleId" name="roleId" type="text" inputmode="numeric" placeholder="Role ID">
-                <label for="priorityLabel">Label</label>
-                <input id="priorityLabel" name="label" type="text" placeholder="Queue label">
-                <label for="priorityPoints">Priority Points</label>
-                <input id="priorityPoints" name="points" type="number" min="1" max="100000" placeholder="100">
-                <button type="submit">Save Role</button>
-              </form>
-
-              <form id="priorityOverrideForm" class="config-panel">
-                <h4>User Override</h4>
-                <label for="priorityDiscordId">Discord User ID</label>
-                <input id="priorityDiscordId" name="discordId" type="text" inputmode="numeric" placeholder="User ID">
-                <label for="priorityOverrideLabel">Label</label>
-                <input id="priorityOverrideLabel" name="label" type="text" placeholder="Manual priority">
-                <label for="priorityOverridePoints">Priority Points</label>
-                <input id="priorityOverridePoints" name="points" type="number" min="1" max="100000" placeholder="500">
-                <button type="submit">Save Override</button>
-              </form>
-            </div>
-            <div class="priority-grid">
-              <div class="config-panel">
-                <h4>Role Rules</h4>
-                <div id="priorityRulesList" class="config-list"></div>
-              </div>
-              <div class="config-panel">
-                <h4>User Overrides</h4>
-                <div id="priorityOverridesList" class="config-list"></div>
-              </div>
-            </div>
-          </section>
-
-          <section id="settingsView" class="actions-view hidden">
-            <div class="section-heading">
-              <h3>Founder Settings</h3>
-              <span>Founder only</span>
-            </div>
-            <div class="config-panel">
-              <h4>Cloud Run Cleanup</h4>
-              <div class="config-list">
-                <div><span>Remove</span><b>DASHBOARD_JWT_SECRET</b></div>
-                <div><span>Remove</span><b>ADMIN_UI_ROLE_IDS</b></div>
-                <div><span>Remove</span><b>FOUNDER_FIREBASE_EMAIL / FOUNDER_FIREBASE_UID</b></div>
-                <div><span>Keep</span><b>MANAGEMENT_ROLE_ID</b></div>
-                <div><span>Keep</span><b>FOUNDER_ROLE_ID / FOUNDER_DISCORD_ID</b></div>
-              </div>
-            </div>
-          </section>
-        </section>
-      </section>
-    </main>
-
-    <script src="/dashboard/app.js"></script>
-  </body>
-</html>
+            <div class="section-

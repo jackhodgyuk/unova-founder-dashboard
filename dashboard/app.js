@@ -6,6 +6,8 @@ const loginForm = document.getElementById('loginForm');
 const loginError = document.getElementById('loginError');
 const firebaseLoginButton = document.getElementById('firebaseLoginButton');
 const authLabel = document.getElementById('authLabel');
+const passwordForm = document.getElementById('passwordForm');
+const passwordNotice = document.getElementById('passwordNotice');
 const playersList = document.getElementById('playersList');
 const selectedPanel = document.getElementById('selectedPanel');
 const emptySelection = document.getElementById('emptySelection');
@@ -37,7 +39,6 @@ let players = [];
 let selectedPlayer = null;
 let refreshTimer = null;
 let firebaseAuth = null;
-let firebaseProvider = null;
 let dashboardUser = null;
 
 function setAuthState(isAuthed) {
@@ -79,23 +80,17 @@ function canManagePriority() {
 function describeFirebaseError(error) {
   const code = error?.code || 'unknown';
   const messages = {
-    'auth/unauthorized-domain': 'This dashboard domain is not authorized in Firebase.',
-    'auth/popup-blocked': 'Your browser blocked the Google sign-in popup.',
-    'auth/popup-closed-by-user': 'The Google sign-in window was closed before login finished.',
-    'auth/cancelled-popup-request': 'Another Google sign-in popup was already open.',
-    'auth/operation-not-allowed': 'Google sign-in is not enabled in Firebase Authentication.',
-    'auth/operation-not-supported-in-this-environment': 'Popup sign-in is not supported in this browser.',
-    'auth/web-storage-unsupported': 'This browser is blocking storage needed for Google sign-in.'
+    'auth/invalid-email': 'Enter a valid Firebase email address.',
+    'auth/invalid-credential': 'Email or password is wrong.',
+    'auth/user-not-found': 'No Firebase user exists for that email.',
+    'auth/wrong-password': 'Email or password is wrong.',
+    'auth/too-many-requests': 'Too many attempts. Wait a bit and try again.',
+    'auth/operation-not-allowed': 'Email/password sign-in is not enabled in Firebase Authentication.',
+    'auth/requires-recent-login': 'Log out, log back in, then change the password.',
+    'auth/weak-password': 'Use a stronger password with at least 8 characters.',
+    'auth/web-storage-unsupported': 'This browser is blocking storage needed for Firebase sign-in.'
   };
-  return `${messages[code] || 'Google sign-in could not complete.'} (${code})`;
-}
-
-function shouldFallbackToRedirect(error) {
-  return [
-    'auth/popup-blocked',
-    'auth/operation-not-supported-in-this-environment',
-    'auth/web-storage-unsupported'
-  ].includes(error?.code);
+  return `${messages[code] || 'Firebase sign-in could not complete.'} (${code})`;
 }
 
 async function completeFirebaseLogin(user) {
@@ -107,7 +102,8 @@ async function completeFirebaseLogin(user) {
   });
 
   if (!loginResponse.ok) {
-    setLoginError('Google account needs a Firebase dashboard role: founder, owner, co_owner, or admin.');
+    const error = await loginResponse.json().catch(() => ({}));
+    setLoginError(error.message || 'This Firebase user needs a dashboard role in Cloud Run.');
     return false;
   }
 
@@ -116,7 +112,7 @@ async function completeFirebaseLogin(user) {
   dashboardUser = data.user || null;
   authLabel.textContent = dashboardUser?.role
     ? `${formatRole(dashboardUser.role)} Access`
-    : 'Firebase Access';
+    : 'Firebase Password Access';
   localStorage.setItem(tokenKey, authToken);
   setAuthState(true);
   return true;
@@ -153,7 +149,7 @@ function renderStatus(data) {
     dashboardUser = data.user;
     authLabel.textContent = dashboardUser.role
       ? `${formatRole(dashboardUser.role)} Access`
-      : 'Firebase Access';
+      : 'Firebase Password Access';
     settingsNavButton.classList.toggle('hidden', dashboardUser.role !== 'founder');
   }
 
@@ -328,172 +324,19 @@ async function loadStatus() {
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-});
-
-document.getElementById('logoutButton').addEventListener('click', () => {
-  localStorage.removeItem(tokenKey);
-  authToken = null;
-  dashboardUser = null;
-  if (firebaseAuth) {
-    firebaseAuth.signOut().catch(() => null);
+  if (!firebaseAuth) {
+    setLoginError('Firebase is still loading. Try again in a second.');
+    return;
   }
-  setAuthState(false);
-});
 
-document.getElementById('refreshButton').addEventListener('click', loadStatus);
-
-document.querySelectorAll('.nav button').forEach((button) => {
-  button.addEventListener('click', () => {
-    document.querySelectorAll('.nav button').forEach((item) => item.classList.remove('active'));
-    button.classList.add('active');
-    const view = button.dataset.view;
-    playersView.classList.toggle('hidden', view !== 'players');
-    actionsView.classList.toggle('hidden', view !== 'actions');
-    priorityView.classList.toggle('hidden', view !== 'priority');
-    settingsView.classList.toggle('hidden', view !== 'settings');
-    if (view === 'priority') loadPriority();
-  });
-});
-
-priorityRoleForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!canManagePriority()) return;
-  const data = Object.fromEntries(new FormData(priorityRoleForm));
-  const response = await api('/dashboard/priority/rules', {
-    method: 'POST',
-    body: JSON.stringify(data)
-  }).catch(() => null);
-  if (response?.ok) {
-    priorityRoleForm.reset();
-    await loadPriority();
+  const formData = new FormData(loginForm);
+  const email = String(formData.get('email') || '').trim();
+  const password = String(formData.get('password') || '');
+  if (!email || !password) {
+    setLoginError('Email and password are required.');
+    return;
   }
-});
 
-priorityOverrideForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!canManagePriority()) return;
-  const data = Object.fromEntries(new FormData(priorityOverrideForm));
-  const response = await api('/dashboard/priority/overrides', {
-    method: 'POST',
-    body: JSON.stringify(data)
-  }).catch(() => null);
-  if (response?.ok) {
-    priorityOverrideForm.reset();
-    await loadPriority();
-  }
-});
-
-async function deletePriorityRule(roleId) {
-  await api('/dashboard/priority/rules/delete', {
-    method: 'POST',
-    body: JSON.stringify({ roleId })
-  }).catch(() => null);
-  await loadPriority();
-}
-
-async function deletePriorityOverride(discordId) {
-  await api('/dashboard/priority/overrides/delete', {
-    method: 'POST',
-    body: JSON.stringify({ discordId })
-  }).catch(() => null);
-  await loadPriority();
-}
-
-document.querySelectorAll('[data-action]').forEach((button) => {
-  button.addEventListener('click', async () => {
-    if (!selectedPlayer) return;
-
-    const action = button.dataset.action;
-    const actionReason = reason.value.trim();
-    if (!actionReason) {
-      actionNotice.textContent = 'Reason is required.';
-      return;
-    }
-
-    actionNotice.textContent = `${action} submitted...`;
-    const response = await api(`/dashboard/moderation/${action}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        playerId: selectedPlayer.id,
-        playerName: selectedPlayer.name,
-        discordId: selectedPlayer.discordId,
-        license: selectedPlayer.license,
-        reason: actionReason
-      })
-    }).catch(() => null);
-
-    if (!response || !response.ok) {
-      actionNotice.textContent = 'Action failed.';
-      return;
-    }
-
-    const data = await response.json();
-    actionNotice.textContent = data.ticket
-      ? `${action} sent. Ticket #${data.ticket.name} opened.`
-      : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
-    reason.value = '';
-    await loadStatus();
-  });
-});
-
-async function setupFirebaseLogin() {
-  const response = await fetch('/dashboard/firebase-config').catch(() => null);
-  if (!response || !response.ok) return;
-
-  const { configured, config } = await response.json();
-  if (!configured) return;
-
-  try {
-    const [
-      { initializeApp },
-      { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged }
-    ] = await Promise.all([
-      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
-      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
-    ]);
-    const app = initializeApp(config);
-    firebaseAuth = getAuth(app);
-    firebaseProvider = new GoogleAuthProvider();
-    firebaseProvider.setCustomParameters({ prompt: 'select_account' });
-
-    const redirectCredential = await getRedirectResult(firebaseAuth).catch((error) => {
-      setLoginError(describeFirebaseError(error));
-      return null;
-    });
-    if (redirectCredential?.user) {
-      await completeFirebaseLogin(redirectCredential.user);
-    }
-
-    firebaseLoginButton.classList.remove('hidden');
-
-    onAuthStateChanged(firebaseAuth, async (user) => {
-      if (!user || authToken) return;
-      await completeFirebaseLogin(user);
-    });
-
-    firebaseLoginButton.addEventListener('click', async () => {
-      setLoginError('');
-      firebaseLoginButton.disabled = true;
-      firebaseLoginButton.textContent = 'Checking Google...';
-      try {
-        const credential = await signInWithPopup(firebaseAuth, firebaseProvider);
-        await completeFirebaseLogin(credential.user);
-      } catch (error) {
-        if (shouldFallbackToRedirect(error)) {
-          firebaseLoginButton.textContent = 'Opening Google...';
-          await signInWithRedirect(firebaseAuth, firebaseProvider);
-          return;
-        }
-        setLoginError(describeFirebaseError(error));
-      } finally {
-        firebaseLoginButton.disabled = false;
-        firebaseLoginButton.textContent = 'Continue with Google';
-      }
-    });
-  } catch (error) {
-    setLoginError(describeFirebaseError(error));
-  }
-}
-
-setupFirebaseLogin();
-setAuthState(Boolean(authToken));
+  setLoginError('');
+  firebaseLoginButton.disabled = true;
+  firebaseLoginButton.textCo

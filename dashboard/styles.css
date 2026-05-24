@@ -327,10 +327,17 @@ button {
 }
 
 #loginError,
-#actionNotice {
+#actionNotice,
+.form-notice {
   min-height: 22px;
   margin: 0;
   color: #ff9aa7;
+}
+
+.form-notice {
+  color: var(--cyan);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .app-view {
@@ -653,100 +660,4 @@ button {
 }
 
 .config-panel input {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--text);
-  background: #090d13;
-  outline: none;
-  padding: 11px;
-}
-
-.config-panel button {
-  min-height: 40px;
-  background: linear-gradient(135deg, var(--cyan), var(--blue));
-  color: #031014;
-}
-
-.config-panel button:disabled,
-.login-panel button:disabled {
-  opacity: 0.54;
-  cursor: not-allowed;
-}
-
-.config-list {
-  display: grid;
-  gap: 8px;
-}
-
-.config-list > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 10px;
-  align-items: center;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: rgba(9, 13, 19, 0.66);
-  padding: 10px;
-}
-
-.config-list span {
-  display: grid;
-  gap: 3px;
-}
-
-.config-list small {
-  color: var(--muted);
-}
-
-.config-list b {
-  color: var(--cyan);
-}
-
-.config-list button {
-  min-height: 34px;
-  padding: 0 10px;
-  background: #202b38;
-  color: var(--text);
-}
-
-@media (max-width: 1050px) {
-  .toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .toolbar-actions {
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 860px) {
-  .shell,
-  .workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    min-height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .quick-stats,
-  .status-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .moderation-panel {
-    border-left: 0;
-    border-top: 1px solid var(--line);
-  }
-
-  .table-head,
-  .player-row,
-  .action-item,
-  .priority-grid,
-  .config-list > div {
-    grid-template-columns: 1fr;
-  }
-}
+  wid

@@ -77,6 +77,33 @@ MYSQL_DATABASE=
 
 The MySQL values can stay blank while testing. The API keeps running and skips database writes if MySQL is unavailable.
 
+## Firebase Email/Password Login
+
+In Firebase Console, enable:
+
+```txt
+Authentication -> Sign-in method -> Email/Password
+```
+
+Create users in:
+
+```txt
+Authentication -> Users -> Add user
+```
+
+The dashboard does not create Firebase users. It signs them in with Firebase email/password and lets the signed-in user change their own password.
+
+Give dashboard access using either Firebase custom claims or these Cloud Run email lists:
+
+```env
+DASHBOARD_FOUNDER_EMAILS=you@example.com
+DASHBOARD_OWNER_EMAILS=
+DASHBOARD_CO_OWNER_EMAILS=
+DASHBOARD_ADMIN_EMAILS=
+```
+
+Comma-separate multiple emails.
+
 ## Optional Firebase Variables
 
 The app already includes the Firebase web config for the FounderBot project. Add these only if you recreate the Firebase web app or want the config managed from Cloud Run:
@@ -91,7 +118,7 @@ FIREBASE_STORAGE_BUCKET=
 FIREBASE_MEASUREMENT_ID=
 ```
 
-Dashboard access is not granted by Cloud Run variables. It is granted by Firebase custom claims:
+Dashboard access can also be granted by Firebase custom claims:
 
 ```json
 { "unovaRole": "founder" }
@@ -113,7 +140,6 @@ Remove these old variables after this deployment is live:
 ```env
 DASHBOARD_JWT_SECRET
 ADMIN_UI_ROLE_IDS
-FOUNDER_FIREBASE_EMAIL
 FOUNDER_FIREBASE_UID
 MANAGEMENT_ROLE_IDS
 ADMIN_UI_ROLE_NAMES
