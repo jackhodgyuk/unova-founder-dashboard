@@ -23,7 +23,7 @@ const founderRoleId = process.env.FOUNDER_ROLE_ID;
 const ticketCategoryId = process.env.DISCORD_TICKET_CATEGORY_ID || process.env.TICKET_CATEGORY_ID;
 const configuredBotRoleId = process.env.DISCORD_BOT_ROLE_ID;
 const configuredBotUserId = process.env.DISCORD_BOT_USER_ID;
-const dashboardUrl = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.PORT || 3001}`;
+const dashboardUrl = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.PORT || 8080}`;
 const whitelistedRoleId = process.env.WHITELISTED_ROLE_ID;
 const hasFounderDiscordId = founderDiscordId && founderDiscordId !== 'your_discord_user_id';
 const onlineFiveMDiscordIds = new Set();
@@ -390,4 +390,9 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-client.login(process.env.DISCORD_BOT_TOKEN);
+client.login(process.env.DISCORD_BOT_TOKEN).catch((error) => {
+  console.error(`[Unova Bot] Login failed: ${error.message}`);
+  if (require.main === module) {
+    process.exit(1);
+  }
+});
