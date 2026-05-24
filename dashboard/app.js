@@ -226,4 +226,27 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     actionNotice.textContent = `${action} submitted...`;
     const response = await api(`/dashboard/moderation/${action}`, {
       method: 'POST',
-      body: JS
+      body: JSON.stringify({
+        playerId: selectedPlayer.id,
+        playerName: selectedPlayer.name,
+        discordId: selectedPlayer.discordId,
+        license: selectedPlayer.license,
+        reason: actionReason
+      })
+    }).catch(() => null);
+
+    if (!response || !response.ok) {
+      actionNotice.textContent = 'Action failed.';
+      return;
+    }
+
+    const data = await response.json();
+    actionNotice.textContent = data.ticket
+      ? `${action} sent. Ticket #${data.ticket.name} opened.`
+      : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
+    reason.value = '';
+    await loadStatus();
+  });
+});
+
+setAuthState(Boolean(authToken));

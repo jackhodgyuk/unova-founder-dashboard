@@ -101,4 +101,38 @@
                 <strong>No Player Selected</strong>
                 <small>Live moderation tools activate when a player is selected.</small>
               </div>
-        
+              <div id="selectedPanel" class="hidden">
+                <div class="selected-player">
+                  <small>Selected Target</small>
+                  <span id="selectedName"></span>
+                  <small id="selectedMeta"></small>
+                </div>
+
+                <label for="reason">Reason</label>
+                <textarea id="reason" rows="6" placeholder="Required"></textarea>
+
+                <div class="action-grid">
+                  <button class="warn" type="button" data-action="warn">Warn</button>
+                  <button class="kick" type="button" data-action="kick">Kick</button>
+                  <button class="ban" type="button" data-action="ban">Ban</button>
+                </div>
+
+                <p id="actionNotice"></p>
+              </div>
+            </aside>
+          </section>
+
+          <section id="actionsView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Recent Actions</h3>
+              <span id="actionsQueueCount">Queue 0</span>
+            </div>
+            <div id="actionsList" class="actions-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/dashboard/app.js"></script>
+  </body>
+</html>
