@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 app.get("/", (req, res) => {
-  res.status(200).send("FounderBot Dashboard Online");
+  res.status(200).send("Unova Management Dashboard Online");
 });
 
 app.post("/fivem/update", (req, res) => {
@@ -15,5 +15,5 @@ app.post("/fivem/update", (req, res) => {
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`FounderBot dashboard listening on port ${PORT}`);
+  console.log(`Unova Management dashboard listening on port ${PORT}`);
 });

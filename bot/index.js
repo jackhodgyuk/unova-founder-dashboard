@@ -1,6 +1,9 @@
 require('dotenv').config();
 
 const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   Events,
@@ -19,7 +22,6 @@ if (!process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN === 'your_bo
 
 const guildId = process.env.DISCORD_GUILD_ID;
 const founderDiscordId = process.env.FOUNDER_DISCORD_ID;
-const founderRoleId = process.env.FOUNDER_ROLE_ID;
 const ticketCategoryId = process.env.DISCORD_TICKET_CATEGORY_ID || process.env.TICKET_CATEGORY_ID;
 const ticketCategoryName = process.env.DISCORD_TICKET_CATEGORY_NAME || process.env.TICKET_CATEGORY_NAME || 'tickets';
 const configuredBotRoleId = process.env.DISCORD_BOT_ROLE_ID;
@@ -29,7 +31,6 @@ const whitelistedRoleId = process.env.WHITELISTED_ROLE_ID;
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
-const hasFounderDiscordId = founderDiscordId && founderDiscordId !== 'your_discord_user_id';
 const onlineFiveMDiscordIds = new Set();
 const vcDmCooldowns = new Map();
 
@@ -37,8 +38,8 @@ if (!guildId || guildId === 'your_discord_server_id') {
   console.warn('DISCORD_GUILD_ID is not configured. Slash commands will not be registered.');
 }
 
-if (!hasFounderDiscordId && !founderRoleId && !process.env.MANAGEMENT_ROLE_IDS && !process.env.ADMIN_UI_ROLE_IDS) {
-  console.warn('FOUNDER_DISCORD_ID, FOUNDER_ROLE_ID, MANAGEMENT_ROLE_IDS, or ADMIN_UI_ROLE_IDS is required for management commands.');
+if (!process.env.MANAGEMENT_ROLE_ID && !process.env.MANAGEMENT_ROLE_IDS && !process.env.MANAGEMENT_ROLE_NAME && !process.env.MANAGEMENT_ROLE_NAMES) {
+  console.warn('MANAGEMENT_ROLE_ID or MANAGEMENT_ROLE_NAME is required for management bot and city permissions.');
 }
 
 const client = new Client({
@@ -58,6 +59,27 @@ const ticketAllow = [
   PermissionFlagsBits.AttachFiles,
   PermissionFlagsBits.EmbedLinks
 ];
+const ticketViewOnly = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.ReadMessageHistory
+];
+const ticketWriteDeny = [
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.AttachFiles,
+  PermissionFlagsBits.EmbedLinks
+];
+const supportTicketLevels = ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'leadership', 'founder'];
+const ticketLevelLabels = {
+  staff: 'Staff',
+  senior_staff: 'Senior Staff',
+  staff_manager: 'Staff Manager',
+  server_manager: 'Server Manager',
+  leadership: 'Co-Owners / Owners',
+  founder: 'Founder',
+  developer: 'Developers',
+  bug_owner: 'Owners / Co-Owners',
+  bug_founder: 'Founder'
+};
 
 function cleanId(value) {
   if (!value) return null;
@@ -89,27 +111,77 @@ function roleIdsByName(guild, ...nameValues) {
     .map((role) => role.id);
 }
 
-function managementRoleIds(guild) {
+function roleGroupIds(guild, group) {
+  const groups = {
+    management: {
+      ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
+      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES]
+    },
+    staff: {
+      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
+      names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES]
+    },
+    senior_staff: {
+      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS],
+      names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES]
+    },
+    staff_manager: {
+      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS],
+      names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES]
+    },
+    server_manager: {
+      ids: [process.env.SERVER_MANAGER_ROLE_ID, process.env.SERVER_MANAGER_ROLE_IDS],
+      names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES]
+    },
+    co_owner: {
+      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS],
+      names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES]
+    },
+    owner: {
+      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS],
+      names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES]
+    },
+    founder: {
+      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS],
+      names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES]
+    },
+    developer: {
+      ids: [process.env.DEVELOPER_ROLE_ID, process.env.DEVELOPER_ROLE_IDS],
+      names: [process.env.DEVELOPER_ROLE_NAME, process.env.DEVELOPER_ROLE_NAMES]
+    },
+    head_developer: {
+      ids: [process.env.HEAD_DEVELOPER_ROLE_ID, process.env.HEAD_DEVELOPER_ROLE_IDS],
+      names: [process.env.HEAD_DEVELOPER_ROLE_NAME, process.env.HEAD_DEVELOPER_ROLE_NAMES]
+    }
+  };
+  const config = groups[group];
+  if (!config) return [];
+  return cleanIdList(...config.ids, roleIdsByName(guild, ...config.names).join(','));
+}
+
+function leadershipRoleIds(guild) {
   return cleanIdList(
-    founderRoleId,
-    process.env.MANAGEMENT_ROLE_IDS,
-    process.env.ADMIN_UI_ROLE_IDS,
-    roleIdsByName(guild, process.env.MANAGEMENT_ROLE_NAMES, process.env.ADMIN_UI_ROLE_NAMES).join(',')
+    roleGroupIds(guild, 'co_owner').join(','),
+    roleGroupIds(guild, 'owner').join(',')
   );
+}
+
+function privilegedOverrideRoleIds(guild) {
+  return cleanIdList(
+    leadershipRoleIds(guild).join(','),
+    roleGroupIds(guild, 'founder').join(',')
+  );
+}
+
+function managementRoleIds(guild) {
+  return roleGroupIds(guild, 'management');
 }
 
 function ticketAccessRoleIds(guild) {
   return cleanIdList(
-    founderRoleId,
-    process.env.MANAGEMENT_ROLE_IDS,
-    process.env.ADMIN_UI_ROLE_IDS,
+    roleGroupIds(guild, 'management').join(','),
     process.env.TICKET_ACCESS_ROLE_IDS,
-    roleIdsByName(
-      guild,
-      process.env.MANAGEMENT_ROLE_NAMES,
-      process.env.ADMIN_UI_ROLE_NAMES,
-      process.env.TICKET_ACCESS_ROLE_NAMES
-    ).join(',')
+    roleIdsByName(guild, process.env.TICKET_ACCESS_ROLE_NAMES).join(',')
   );
 }
 
@@ -142,8 +214,17 @@ function memberHasAnyRole(member, roleIds) {
 }
 
 function isManagementMember(member, userId) {
-  if (hasFounderDiscordId && userId === founderDiscordId) return true;
   return memberHasAnyRole(member, managementRoleIds(member?.guild));
+}
+
+function isFounderMember(member, userId) {
+  const configuredFounderId = cleanId(founderDiscordId);
+  if (configuredFounderId && userId === configuredFounderId) return true;
+  return memberHasAnyRole(member, roleGroupIds(member?.guild, 'founder'));
+}
+
+function isPrivilegedOverrideMember(member, userId) {
+  return isFounderMember(member, userId) || memberHasAnyRole(member, privilegedOverrideRoleIds(member?.guild));
 }
 
 function memberHasRole(member, roleId) {
@@ -188,10 +269,6 @@ function buildTicketOverwrites(guild, extraUserIds = []) {
     overwrites.push({ id: roleId, allow: ticketAllow });
   }
 
-  if (cleanId(founderDiscordId)) {
-    overwrites.push({ id: founderDiscordId, allow: ticketAllow });
-  }
-
   if (botRoleId) {
     overwrites.push({ id: botRoleId, allow: ticketAllow });
   }
@@ -208,7 +285,7 @@ function buildTicketOverwrites(guild, extraUserIds = []) {
 }
 
 function isTicketChannel(channel) {
-  return Boolean(channel && channel.topic && channel.topic.includes('unova-founder-ticket'));
+  return Boolean(channel && channel.topic && channel.topic.includes('unova-management-ticket'));
 }
 
 async function resolveTicketCategory(guild) {
@@ -261,7 +338,268 @@ async function dmMetagamingWarning(member) {
   ].join('\n')).catch(() => null);
 }
 
-async function createFounderTicket(guild, options) {
+function makeManagementMentionLine(guild) {
+  const roleIds = managementRoleIds(guild);
+  if (roleIds.length) {
+    return `Management role: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
+  }
+  return 'Management role: not configured';
+}
+
+function ticketLevelRoleIds(guild, kind, level) {
+  if (kind === 'bug') {
+    if (level === 'developer') {
+      return cleanIdList(
+        roleGroupIds(guild, 'developer').join(','),
+        roleGroupIds(guild, 'head_developer').join(',')
+      );
+    }
+    if (level === 'bug_owner') {
+      return leadershipRoleIds(guild);
+    }
+    if (level === 'bug_founder') {
+      return roleGroupIds(guild, 'founder');
+    }
+  }
+
+  if (level === 'leadership') return leadershipRoleIds(guild);
+  return roleGroupIds(guild, level);
+}
+
+function parseTicketMeta(channel) {
+  const topic = channel?.topic || '';
+  if (!topic.includes('unova-support-ticket') && !topic.includes('unova-management-ticket')) return null;
+  const meta = {};
+  for (const part of topic.split('|').map((item) => item.trim())) {
+    const [key, ...rest] = part.split('=');
+    if (rest.length) meta[key.trim()] = rest.join('=').trim();
+  }
+  if (topic.includes('unova-management-ticket')) {
+    meta.kind = meta.kind || 'management';
+    meta.locked = 'true';
+  }
+  return meta;
+}
+
+function serializeTicketMeta(meta) {
+  return [
+    'unova-support-ticket',
+    `kind=${meta.kind || 'support'}`,
+    `level=${meta.level || 'staff'}`,
+    `opener=${meta.opener || 'unknown'}`,
+    `source=${meta.source || 'player'}`,
+    `locked=${meta.locked === true || meta.locked === 'true' ? 'true' : 'false'}`
+  ].join(' | ');
+}
+
+function buildSupportTicketOverwrites(guild, openerId, kind, level) {
+  const botUserId = cleanId(configuredBotUserId) || client.user.id;
+  const botRoleId = cleanId(configuredBotRoleId);
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel]
+    }
+  ];
+
+  if (cleanId(openerId)) {
+    overwrites.push({ id: openerId, allow: ticketAllow });
+  }
+
+  for (const roleId of ticketLevelRoleIds(guild, kind, level)) {
+    overwrites.push({ id: roleId, allow: ticketAllow });
+  }
+
+  for (const roleId of privilegedOverrideRoleIds(guild)) {
+    const canTalk = level === 'leadership' || level === 'founder' || level === 'bug_owner' || level === 'bug_founder';
+    overwrites.push(canTalk
+      ? { id: roleId, allow: ticketAllow }
+      : { id: roleId, allow: ticketViewOnly, deny: ticketWriteDeny });
+  }
+
+  if (botRoleId) overwrites.push({ id: botRoleId, allow: ticketAllow });
+  if (botUserId) overwrites.push({ id: botUserId, allow: ticketAllow });
+  return uniqueOverwrites(overwrites);
+}
+
+async function onlineStaffMentions(guild, roleIds) {
+  const mentions = [];
+  for (const discordId of onlineFiveMDiscordIds) {
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member || !memberHasAnyRole(member, roleIds)) continue;
+    mentions.push(`<@${discordId}>`);
+  }
+
+  if (mentions.length) return mentions.join(' ');
+  return roleIds.map((roleId) => `<@&${roleId}>`).join(' ');
+}
+
+function ticketButtons(kind, locked) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(kind === 'bug' ? 'ticket_bug_escalate' : 'ticket_escalate')
+      .setLabel('Escalate')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('ticket_override')
+      .setLabel('Override')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('ticket_close')
+      .setLabel('Close')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  if (kind === 'bug') {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId('ticket_bug_to_staff')
+        .setLabel('Send To Staff')
+        .setStyle(ButtonStyle.Success)
+    );
+  }
+
+  return [row];
+}
+
+async function createPlayerTicket(guild, opener, kind) {
+  const initialLevel = kind === 'bug' ? 'developer' : 'staff';
+  const channelOptions = {
+    name: makeTicketName(kind === 'bug' ? 'bug' : 'support', opener.id),
+    type: ChannelType.GuildText,
+    topic: serializeTicketMeta({
+      kind,
+      level: initialLevel,
+      opener: opener.id,
+      source: 'player',
+      locked: false
+    }),
+    permissionOverwrites: buildSupportTicketOverwrites(guild, opener.id, kind, initialLevel)
+  };
+
+  const categoryId = await resolveTicketCategory(guild).catch((error) => {
+    console.warn(`[Unova Bot] Ticket category lookup failed: ${error.message}`);
+    return null;
+  });
+  if (categoryId) channelOptions.parent = categoryId;
+
+  const channel = await guild.channels.create(channelOptions);
+  const notifyRoleIds = ticketLevelRoleIds(guild, kind, initialLevel);
+  const mentions = await onlineStaffMentions(guild, notifyRoleIds);
+  await channel.send({
+    content: [
+      mentions || makeManagementMentionLine(guild),
+      `**${kind === 'bug' ? 'Bug report' : 'Support ticket'} opened**`,
+      `Player: <@${opener.id}> (${opener.id})`,
+      `Current level: ${ticketLevelLabels[initialLevel]}`,
+      '',
+      'Staff should be the first point of call. Use the buttons below when this needs moving up.'
+    ].join('\n'),
+    components: ticketButtons(kind, false),
+    allowedMentions: { parse: ['roles', 'users'] }
+  });
+  return channel;
+}
+
+function nextSupportLevel(level) {
+  const index = supportTicketLevels.indexOf(level);
+  if (index === -1 || index >= supportTicketLevels.length - 1) return null;
+  return supportTicketLevels[index + 1];
+}
+
+function nextBugLevel(level) {
+  if (level === 'developer') return 'bug_owner';
+  if (level === 'bug_owner') return 'bug_founder';
+  return null;
+}
+
+function memberCanEscalateTicket(member, meta) {
+  if (!member || !meta) return false;
+  if (isFounderMember(member, member.id)) return true;
+  if (meta.kind === 'bug') {
+    if (meta.level === 'developer') {
+      return memberHasAnyRole(member, cleanIdList(
+        roleGroupIds(member.guild, 'developer').join(','),
+        roleGroupIds(member.guild, 'head_developer').join(',')
+      ));
+    }
+    if (meta.level === 'bug_owner') {
+      return memberHasAnyRole(member, leadershipRoleIds(member.guild));
+    }
+    return false;
+  }
+
+  return memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level));
+}
+
+async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.kind) {
+  const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
+  await channel.setTopic(serializeTicketMeta(nextMeta));
+  await channel.permissionOverwrites.set(
+    buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel)
+  );
+
+  const roleIds = ticketLevelRoleIds(channel.guild, nextKind, nextLevel);
+  const mentions = await onlineStaffMentions(channel.guild, roleIds);
+  await channel.send({
+    content: [
+      mentions || roleIds.map((roleId) => `<@&${roleId}>`).join(' '),
+      `Ticket escalated by <@${actor.id}>.`,
+      `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
+    ].filter(Boolean).join('\n'),
+    components: ticketButtons(nextKind, meta.locked === 'true'),
+    allowedMentions: { parse: ['roles', 'users'] }
+  });
+}
+
+async function handleTicketEscalation(interaction, forcedLevel = null) {
+  const meta = parseTicketMeta(interaction.channel);
+  if (!meta || meta.kind === 'management') {
+    return interaction.reply({ content: 'This is not an escalatable player ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!memberCanEscalateTicket(interaction.member, meta)) {
+    return interaction.reply({ content: 'Your current role cannot escalate this ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  const nextLevel = forcedLevel || (meta.kind === 'bug' ? nextBugLevel(meta.level) : nextSupportLevel(meta.level));
+  if (!nextLevel) {
+    return interaction.reply({ content: 'This ticket is already at the highest level.', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const nextKind = forcedLevel === 'staff' ? 'support' : meta.kind;
+  await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, nextKind);
+  return interaction.editReply(`Escalated to ${ticketLevelLabels[nextLevel] || nextLevel}.`);
+}
+
+async function handleTicketOverride(interaction) {
+  const meta = parseTicketMeta(interaction.channel);
+  if (!meta) {
+    return interaction.reply({ content: 'This is not a Unova ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  const locked = meta.locked === 'true' || meta.source === 'founder' || meta.source === 'fivem-ui';
+  const founder = isFounderMember(interaction.member, interaction.user.id);
+  if (locked && !founder) {
+    return interaction.reply({ content: 'Only the founder can override this locked ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!founder && !isPrivilegedOverrideMember(interaction.member, interaction.user.id)) {
+    return interaction.reply({ content: 'Only co-owners, owners, or the founder can override tickets.', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.channel.permissionOverwrites.edit(interaction.user.id, {
+    ViewChannel: true,
+    SendMessages: true,
+    ReadMessageHistory: true,
+    AttachFiles: true,
+    EmbedLinks: true
+  });
+  await interaction.reply({ content: `Override granted to ${interaction.user}.` });
+}
+
+async function createManagementTicket(guild, options) {
   const targetUser = options.targetUser || null;
   const reason = options.reason || 'No reason provided';
   const label = options.label || 'ticket';
@@ -269,7 +607,7 @@ async function createFounderTicket(guild, options) {
   const channelOptions = {
     name: makeTicketName(label, targetUser && targetUser.id),
     type: ChannelType.GuildText,
-    topic: `unova-founder-ticket | source=${options.source || 'discord'} | target=${targetUser ? targetUser.id : 'none'}`,
+    topic: `unova-management-ticket | source=${options.source || 'discord'} | target=${targetUser ? targetUser.id : 'none'}`,
     permissionOverwrites: buildTicketOverwrites(guild, extraUserIds)
   };
 
@@ -283,11 +621,10 @@ async function createFounderTicket(guild, options) {
 
   const channel = await guild.channels.create(channelOptions);
   const targetLine = targetUser ? `Target: <@${targetUser.id}> (${targetUser.id})` : 'Target: not added yet';
-  const managementLine = cleanId(founderRoleId) ? `Management role: <@&${founderRoleId}>` : `Management: <@${founderDiscordId}>`;
 
   await channel.send([
     '**Management ticket opened**',
-    managementLine,
+    makeManagementMentionLine(guild),
     targetLine,
     `Reason: ${reason}`,
     '',
@@ -324,6 +661,15 @@ async function registerSlashCommands(readyClient) {
       .setDescription('Give the whitelisted role to a Discord user ID.')
       .addStringOption((option) =>
         option.setName('user_id').setDescription('Discord user ID or mention.').setRequired(true)
+      ),
+    new SlashCommandBuilder()
+      .setName('panel')
+      .setDescription('Founder-only ticket panel controls.')
+      .addSubcommand((subcommand) =>
+        subcommand.setName('tickets').setDescription('Post the public support and bug report ticket panel.')
+      )
+      .addSubcommand((subcommand) =>
+        subcommand.setName('settings').setDescription('Show the current ticket role settings.')
       ),
     new SlashCommandBuilder()
       .setName('ticket')
@@ -473,9 +819,46 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton()) {
+    if (interaction.customId === 'open_support_ticket' || interaction.customId === 'open_bug_ticket') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const kind = interaction.customId === 'open_bug_ticket' ? 'bug' : 'support';
+      const channel = await createPlayerTicket(interaction.guild, interaction.user, kind);
+      return interaction.editReply(`Ticket opened: ${channel}`);
+    }
+
+    if (interaction.customId === 'ticket_escalate' || interaction.customId === 'ticket_bug_escalate') {
+      return handleTicketEscalation(interaction);
+    }
+
+    if (interaction.customId === 'ticket_bug_to_staff') {
+      return handleTicketEscalation(interaction, 'staff');
+    }
+
+    if (interaction.customId === 'ticket_override') {
+      return handleTicketOverride(interaction);
+    }
+
+    if (interaction.customId === 'ticket_close') {
+      const meta = parseTicketMeta(interaction.channel);
+      if (!meta) return interaction.reply({ content: 'This is not a Unova ticket.', flags: MessageFlags.Ephemeral });
+      const canClose = isPrivilegedOverrideMember(interaction.member, interaction.user.id)
+        || memberCanEscalateTicket(interaction.member, meta)
+        || interaction.user.id === meta.opener;
+      if (!canClose) {
+        return interaction.reply({ content: 'You cannot close this ticket.', flags: MessageFlags.Ephemeral });
+      }
+      await interaction.reply({ content: 'Closing this ticket.', flags: MessageFlags.Ephemeral });
+      await interaction.channel.delete('Ticket closed.');
+      return;
+    }
+
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
-  if (!isManagementMember(interaction.member, interaction.user.id)) {
+  if (interaction.commandName !== 'panel' && !isManagementMember(interaction.member, interaction.user.id)) {
     return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
   }
 
@@ -486,7 +869,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const user = interaction.options.getUser('user', true);
       const reason = interaction.options.getString('reason') || 'Management ticket';
-      const channel = await createFounderTicket(interaction.guild, {
+      const channel = await createManagementTicket(interaction.guild, {
         targetUser: user,
         reason,
         label: 'ticket',
@@ -503,6 +886,51 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.reply({ content: 'Closing this management ticket.', flags: MessageFlags.Ephemeral });
       await interaction.channel.delete('Management ticket closed.');
       return;
+    }
+  }
+
+  if (interaction.commandName === 'panel') {
+    if (!isFounderMember(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Founder settings only.', flags: MessageFlags.Ephemeral });
+    }
+
+    const subcommand = interaction.options.getSubcommand();
+    if (subcommand === 'tickets') {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('open_support_ticket')
+          .setLabel('Open Support Ticket')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('open_bug_ticket')
+          .setLabel('Bug Report')
+          .setStyle(ButtonStyle.Secondary)
+      );
+      await interaction.channel.send({
+        content: [
+          '**Unova Support**',
+          'Open a support ticket for staff help, or send a bug report to the development team.'
+        ].join('\n'),
+        components: [row]
+      });
+      return interaction.reply({ content: 'Ticket panel posted.', flags: MessageFlags.Ephemeral });
+    }
+
+    if (subcommand === 'settings') {
+      const lines = [
+        '**Ticket Settings**',
+        `Management: ${managementRoleIds(interaction.guild).map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Staff: ${roleGroupIds(interaction.guild, 'staff').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Senior Staff: ${roleGroupIds(interaction.guild, 'senior_staff').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Staff Manager: ${roleGroupIds(interaction.guild, 'staff_manager').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Server Manager: ${roleGroupIds(interaction.guild, 'server_manager').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Co-Owner: ${roleGroupIds(interaction.guild, 'co_owner').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Owner: ${roleGroupIds(interaction.guild, 'owner').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Founder: ${roleGroupIds(interaction.guild, 'founder').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Developer: ${roleGroupIds(interaction.guild, 'developer').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Head Developer: ${roleGroupIds(interaction.guild, 'head_developer').map((id) => `<@&${id}>`).join(', ') || 'not set'}`
+      ];
+      return interaction.reply({ content: lines.join('\n'), flags: MessageFlags.Ephemeral });
     }
   }
 
@@ -578,6 +1006,10 @@ client.on(Events.MessageCreate, async (message) => {
 
   const [, cmd, targetId, ...reasonParts] = message.content.split(' ');
 
+  if (!isManagementMember(message.member, message.author.id)) {
+    return message.reply('Management only.');
+  }
+
   if (cmd === 'ping') {
     return message.reply('Unova Management is online.');
   }
@@ -593,10 +1025,6 @@ client.on(Events.MessageCreate, async (message) => {
       '`/ticket open` - open a private management ticket',
       '`/add` - add a user to a management ticket'
     ].join('\n'));
-  }
-
-  if (!isManagementMember(message.member, message.author.id)) {
-    return message.reply('Management only.');
   }
 
   const reason = reasonParts.join(' ') || 'No reason provided';

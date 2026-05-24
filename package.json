@@ -1,7 +1,7 @@
 {
-  "name": "unova-founder-dashboard",
+  "name": "unova-management-dashboard",
   "version": "1.0.0",
-  "description": "Unova Founder Dashboard starter: Discord + FiveM moderation bridge",
+  "description": "Unova Management Dashboard: Firebase-authenticated Discord and FiveM moderation bridge",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

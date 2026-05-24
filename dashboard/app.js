@@ -1,11 +1,11 @@
-const tokenKey = 'unovaFounderToken';
+const tokenKey = 'unovaFirebaseToken';
 const shell = document.querySelector('.shell');
 const loginView = document.getElementById('loginView');
 const appView = document.getElementById('appView');
 const loginForm = document.getElementById('loginForm');
 const loginError = document.getElementById('loginError');
 const firebaseLoginButton = document.getElementById('firebaseLoginButton');
-const loginDivider = document.getElementById('loginDivider');
+const authLabel = document.getElementById('authLabel');
 const playersList = document.getElementById('playersList');
 const selectedPanel = document.getElementById('selectedPanel');
 const emptySelection = document.getElementById('emptySelection');
@@ -24,6 +24,13 @@ const statUpdated = document.getElementById('statUpdated');
 const actionsList = document.getElementById('actionsList');
 const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
+const priorityView = document.getElementById('priorityView');
+const settingsView = document.getElementById('settingsView');
+const settingsNavButton = document.getElementById('settingsNavButton');
+const priorityRoleForm = document.getElementById('priorityRoleForm');
+const priorityOverrideForm = document.getElementById('priorityOverrideForm');
+const priorityRulesList = document.getElementById('priorityRulesList');
+const priorityOverridesList = document.getElementById('priorityOverridesList');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -31,6 +38,7 @@ let selectedPlayer = null;
 let refreshTimer = null;
 let firebaseAuth = null;
 let firebaseProvider = null;
+let dashboardUser = null;
 
 function setAuthState(isAuthed) {
   shell.classList.toggle('locked', !isAuthed);
@@ -47,6 +55,25 @@ function setAuthState(isAuthed) {
 
 function setLoginError(message) {
   loginError.textContent = message || '';
+}
+
+function formatRole(value) {
+  return String(value || 'admin')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function roleRank(value) {
+  return {
+    admin: 1,
+    co_owner: 2,
+    owner: 3,
+    founder: 4
+  }[value] || 0;
+}
+
+function canManagePriority() {
+  return roleRank(dashboardUser?.role) >= roleRank('owner');
 }
 
 function describeFirebaseError(error) {
@@ -72,7 +99,7 @@ function shouldFallbackToRedirect(error) {
 }
 
 async function completeFirebaseLogin(user) {
-  const idToken = await user.getIdToken();
+  const idToken = await user.getIdToken(true);
   const loginResponse = await fetch('/auth/firebase-login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -80,19 +107,30 @@ async function completeFirebaseLogin(user) {
   });
 
   if (!loginResponse.ok) {
-    setLoginError('Google account is not allowed for founder access.');
+    setLoginError('Google account needs a Firebase dashboard role: founder, owner, co_owner, or admin.');
     return false;
   }
 
   const data = await loginResponse.json();
-  authToken = data.token;
+  authToken = idToken;
+  dashboardUser = data.user || null;
+  authLabel.textContent = dashboardUser?.role
+    ? `${formatRole(dashboardUser.role)} Access`
+    : 'Firebase Access';
   localStorage.setItem(tokenKey, authToken);
-  loginForm.reset();
   setAuthState(true);
   return true;
 }
 
-function api(path, options = {}) {
+async function refreshFirebaseToken(force = false) {
+  if (!firebaseAuth?.currentUser) return authToken;
+  authToken = await firebaseAuth.currentUser.getIdToken(force);
+  localStorage.setItem(tokenKey, authToken);
+  return authToken;
+}
+
+async function api(path, options = {}) {
+  await refreshFirebaseToken(false).catch(() => null);
   return fetch(path, {
     ...options,
     headers: {
@@ -111,6 +149,14 @@ function formatUpdated(value) {
 }
 
 function renderStatus(data) {
+  if (data.user) {
+    dashboardUser = data.user;
+    authLabel.textContent = dashboardUser.role
+      ? `${formatRole(dashboardUser.role)} Access`
+      : 'Firebase Access';
+    settingsNavButton.classList.toggle('hidden', dashboardUser.role !== 'founder');
+  }
+
   const fivem = data.fivem || {};
   players = data.players || fivem.players || [];
   const onlinePlayers = fivem.onlinePlayers || players.length;
@@ -133,6 +179,59 @@ function renderStatus(data) {
 
   renderPlayers();
   renderActions(data.recentActions || []);
+}
+
+function renderPriority(data) {
+  const rules = data.rules || [];
+  const overrides = data.overrides || [];
+  const lockedMessage = canManagePriority() ? '' : '<small class="muted">Owner, co-owner, or founder required to edit.</small>';
+  priorityRoleForm.querySelectorAll('input, button').forEach((item) => {
+    item.disabled = !canManagePriority();
+  });
+  priorityOverrideForm.querySelectorAll('input, button').forEach((item) => {
+    item.disabled = !canManagePriority();
+  });
+
+  priorityRulesList.innerHTML = lockedMessage || '';
+  if (!rules.length) {
+    priorityRulesList.innerHTML += '<div><span>No priority roles yet.</span><b>-</b></div>';
+  }
+  for (const rule of rules) {
+    const item = document.createElement('div');
+    item.innerHTML = `<span>${escapeHtml(rule.label)}<small>${escapeHtml(rule.roleId)}</small></span><b>${rule.points}</b>`;
+    if (canManagePriority()) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Remove';
+      button.addEventListener('click', () => deletePriorityRule(rule.roleId));
+      item.appendChild(button);
+    }
+    priorityRulesList.appendChild(item);
+  }
+
+  priorityOverridesList.innerHTML = lockedMessage || '';
+  if (!overrides.length) {
+    priorityOverridesList.innerHTML += '<div><span>No user overrides yet.</span><b>-</b></div>';
+  }
+  for (const override of overrides) {
+    const item = document.createElement('div');
+    item.innerHTML = `<span>${escapeHtml(override.label)}<small>${escapeHtml(override.discordId)}</small></span><b>${override.points}</b>`;
+    if (canManagePriority()) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Remove';
+      button.addEventListener('click', () => deletePriorityOverride(override.discordId));
+      item.appendChild(button);
+    }
+    priorityOverridesList.appendChild(item);
+  }
+}
+
+async function loadPriority() {
+  if (!authToken) return;
+  const response = await api('/dashboard/priority').catch(() => null);
+  if (!response || !response.ok) return;
+  renderPriority(await response.json());
 }
 
 function renderPlayers() {
@@ -175,9 +274,12 @@ function renderActions(actions) {
   for (const action of actions) {
     const item = document.createElement('div');
     item.className = 'action-item';
+    const targetDiscord = action.targetDiscordName || action.discordId || 'not linked';
+    const moderator = action.moderatorDiscordName || action.moderatorDisplayName || action.moderatorDiscordId || 'Management';
+    const target = `${action.playerName || 'Unknown target'} (${targetDiscord})`;
     item.innerHTML = [
       `<span class="badge ${action.action}">${action.action}</span>`,
-      `<span>${escapeHtml(action.playerName || action.discordId || action.license || 'Unknown target')} - ${escapeHtml(action.reason || '')}</span>`,
+      `<span><b>${escapeHtml(moderator)}</b> ${escapeHtml(action.action)} ${escapeHtml(target)} - ${escapeHtml(action.reason || '')}</span>`,
       `<span class="muted">${new Date(action.createdAt).toLocaleString()}</span>`
     ].join('');
     actionsList.appendChild(item);
@@ -226,34 +328,12 @@ async function loadStatus() {
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  setLoginError('');
-  const founderKey = new FormData(loginForm).get('founderKey');
-  if (!founderKey) {
-    setLoginError('Founder key is required.');
-    return;
-  }
-
-  const response = await fetch('/auth/founder-dev-login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ founderKey })
-  }).catch(() => null);
-
-  if (!response || !response.ok) {
-    setLoginError('Founder key rejected.');
-    return;
-  }
-
-  const data = await response.json();
-  authToken = data.token;
-  localStorage.setItem(tokenKey, authToken);
-  loginForm.reset();
-  setAuthState(true);
 });
 
 document.getElementById('logoutButton').addEventListener('click', () => {
   localStorage.removeItem(tokenKey);
   authToken = null;
+  dashboardUser = null;
   if (firebaseAuth) {
     firebaseAuth.signOut().catch(() => null);
   }
@@ -269,8 +349,55 @@ document.querySelectorAll('.nav button').forEach((button) => {
     const view = button.dataset.view;
     playersView.classList.toggle('hidden', view !== 'players');
     actionsView.classList.toggle('hidden', view !== 'actions');
+    priorityView.classList.toggle('hidden', view !== 'priority');
+    settingsView.classList.toggle('hidden', view !== 'settings');
+    if (view === 'priority') loadPriority();
   });
 });
+
+priorityRoleForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityRoleForm));
+  const response = await api('/dashboard/priority/rules', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityRoleForm.reset();
+    await loadPriority();
+  }
+});
+
+priorityOverrideForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityOverrideForm));
+  const response = await api('/dashboard/priority/overrides', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityOverrideForm.reset();
+    await loadPriority();
+  }
+});
+
+async function deletePriorityRule(roleId) {
+  await api('/dashboard/priority/rules/delete', {
+    method: 'POST',
+    body: JSON.stringify({ roleId })
+  }).catch(() => null);
+  await loadPriority();
+}
+
+async function deletePriorityOverride(discordId) {
+  await api('/dashboard/priority/overrides/delete', {
+    method: 'POST',
+    body: JSON.stringify({ discordId })
+  }).catch(() => null);
+  await loadPriority();
+}
 
 document.querySelectorAll('[data-action]').forEach((button) => {
   button.addEventListener('click', async () => {
@@ -319,7 +446,7 @@ async function setupFirebaseLogin() {
   try {
     const [
       { initializeApp },
-      { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }
+      { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged }
     ] = await Promise.all([
       import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
       import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
@@ -338,7 +465,11 @@ async function setupFirebaseLogin() {
     }
 
     firebaseLoginButton.classList.remove('hidden');
-    loginDivider.classList.remove('hidden');
+
+    onAuthStateChanged(firebaseAuth, async (user) => {
+      if (!user || authToken) return;
+      await completeFirebaseLogin(user);
+    });
 
     firebaseLoginButton.addEventListener('click', async () => {
       setLoginError('');

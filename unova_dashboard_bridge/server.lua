@@ -1,6 +1,5 @@
 local RAW_DASHBOARD_URL = GetConvar('unova_dashboard_url', 'https://unova-founder-dashboard-git-597032418775.europe-west1.run.app')
 local API_KEY = GetConvar('unova_dashboard_key', 'change_this_fivem_secret')
-local FOUNDER_DISCORD_ID = GetConvar('unova_founder_discord_id', '681156025365299220')
 
 local function normalizeDashboardUrl(value)
     local normalized = tostring(value or '')
@@ -12,6 +11,8 @@ end
 
 local DASHBOARD_URL = normalizeDashboardUrl(RAW_DASHBOARD_URL)
 local API_KEY_CONFIGURED = API_KEY ~= '' and API_KEY ~= 'change_this_fivem_secret'
+local connectingQueue = {}
+local queueSerial = 0
 
 local function apiUrl(path)
     return DASHBOARD_URL .. path
@@ -21,6 +22,52 @@ local function urlEncode(value)
     return tostring(value or ''):gsub('([^%w%-_%.~])', function(char)
         return string.format('%%%02X', string.byte(char))
     end)
+end
+
+local function removeQueueEntry(src)
+    for index = #connectingQueue, 1, -1 do
+        if connectingQueue[index].src == src then
+            table.remove(connectingQueue, index)
+        end
+    end
+end
+
+local function sortQueue()
+    table.sort(connectingQueue, function(a, b)
+        if a.priority ~= b.priority then
+            return a.priority > b.priority
+        end
+        return a.joinedAt < b.joinedAt
+    end)
+end
+
+local function queuePosition(src)
+    sortQueue()
+    for index, entry in ipairs(connectingQueue) do
+        if entry.src == src then return index end
+    end
+    return 1
+end
+
+local function fetchPriority(discordId, cb)
+    if not discordId then
+        cb({ points = 0, label = 'Standard Queue' })
+        return
+    end
+
+    PerformHttpRequest(apiUrl('/fivem/priority/check?discordId=' .. urlEncode(discordId)), function(status, body)
+        if status ~= 200 or not body then
+            cb({ points = 0, label = 'Standard Queue' })
+            return
+        end
+
+        local data = json.decode(body)
+        local priority = data and data.priority or {}
+        cb({
+            points = tonumber(priority.points or 0) or 0,
+            label = priority.label or 'Standard Queue'
+        })
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
 local function logHttpFailure(label, status, body, errorData)
@@ -58,9 +105,7 @@ end
 
 local function hasLocalAdminAccess(src)
     if src == 0 then return true end
-    if IsPlayerAceAllowed(src, 'unova.admin') then return true end
-    if IsPlayerAceAllowed(src, 'unova.founder') then return true end
-    return getDiscordId(src) == FOUNDER_DISCORD_ID
+    return GetConvar('unova_allow_ace_admin', 'false') == 'true' and IsPlayerAceAllowed(src, 'unova.admin')
 end
 
 local function checkAdminAccess(src, cb)
@@ -111,8 +156,8 @@ local function getPlayerList()
     return players
 end
 
-local function notifyFounder(src, message, ok)
-    TriggerClientEvent('unova:founder:notice', src, {
+local function notifyAdmin(src, message, ok)
+    TriggerClientEvent('unova:admin:notice', src, {
         message = message,
         ok = ok == true
     })
@@ -205,7 +250,7 @@ local function openAdminPanel(src)
             return
         end
 
-        TriggerClientEvent('unova:founder:openPanel', src, getPlayerList())
+        TriggerClientEvent('unova:admin:openPanel', src, getPlayerList())
     end)
 end
 
@@ -228,7 +273,7 @@ RegisterCommand('unovatest', function(src)
             print('[Unova Dashboard] ' .. message)
             return
         end
-        notifyFounder(src, message, ok)
+        notifyAdmin(src, message, ok)
     end
 
     checkAdminAccess(src, function(allowed)
@@ -267,15 +312,15 @@ RegisterCommand('unovatest', function(src)
     end)
 end, false)
 
-RegisterNetEvent('unova:founder:refreshPlayers', function()
+RegisterNetEvent('unova:admin:refreshPlayers', function()
     local src = source
     checkAdminAccess(src, function(allowed)
         if not allowed then return end
-        TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+        TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList())
     end)
 end)
 
-RegisterNetEvent('unova:founder:moderate', function(data)
+RegisterNetEvent('unova:admin:moderate', function(data)
     local src = source
     if type(data) ~= 'table' then return end
 
@@ -284,20 +329,20 @@ RegisterNetEvent('unova:founder:moderate', function(data)
 
         local action = tostring(data.action or '')
         if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' then
-            notifyFounder(src, 'Invalid moderation action.', false)
+            notifyAdmin(src, 'Invalid moderation action.', false)
             return
         end
 
         local targetId = tonumber(data.playerId)
         local targetInfo = targetId and getPlayerInfo(targetId) or nil
         if not targetInfo then
-            notifyFounder(src, 'That player is no longer online.', false)
+            notifyAdmin(src, 'That player is no longer online.', false)
             return
         end
 
         local reason = tostring(data.reason or '')
         if reason == '' then
-            notifyFounder(src, 'Reason is required.', false)
+            notifyAdmin(src, 'Reason is required.', false)
             return
         end
 
@@ -307,17 +352,17 @@ RegisterNetEvent('unova:founder:moderate', function(data)
             discordId = targetInfo.discordId,
             license = targetInfo.license,
             reason = reason,
-            moderatorDiscordId = getDiscordId(src) or FOUNDER_DISCORD_ID
+            moderatorDiscordId = getDiscordId(src)
         }
 
         PerformHttpRequest(apiUrl('/fivem/admin/moderation/' .. action), function(status, body, _, errorData)
             if status == 200 then
-                notifyFounder(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
-                TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+                notifyAdmin(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
+                TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList())
                 return
             end
 
-            notifyFounder(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(errorData or body or ''), false)
+            notifyAdmin(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(errorData or body or ''), false)
         end, 'POST', json.encode(payload), {
             ['Content-Type'] = 'application/json',
             ['x-api-key'] = API_KEY
@@ -328,11 +373,16 @@ end)
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     local src = source
     local license = getLicense(src)
-    if not license then return end
+    local discordId = getDiscordId(src)
 
     deferrals.defer()
     Wait(0)
-    deferrals.update('Checking Unova ban status...')
+    deferrals.update('Unova Roleplay | Checking account, ban status, and priority...')
+
+    if not license then
+        deferrals.done('Could not read your FiveM license. Please restart FiveM and try again.')
+        return
+    end
 
     PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license)), function(status, body)
         if status == 200 and body then
@@ -342,16 +392,65 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
                 return
             end
         end
-        deferrals.done()
+
+        fetchPriority(discordId, function(priority)
+            queueSerial = queueSerial + 1
+            local entry = {
+                src = src,
+                name = name,
+                discordId = discordId,
+                priority = priority.points or 0,
+                label = priority.label or 'Standard Queue',
+                joinedAt = queueSerial
+            }
+            table.insert(connectingQueue, entry)
+
+            CreateThread(function()
+                local maxPlayers = GetConvarInt('sv_maxclients', 64)
+                local startedAt = os.time()
+                local releaseAt = startedAt + 2
+
+                while true do
+                    local position = queuePosition(src)
+                    local online = #GetPlayers()
+                    deferrals.update(('Unova Priority Queue | %s | Priority %s | Position %s | Online %s/%s'):format(
+                        entry.label,
+                        tostring(entry.priority),
+                        tostring(position),
+                        tostring(online),
+                        tostring(maxPlayers)
+                    ))
+
+                    if position <= 1 and online < maxPlayers and os.time() >= releaseAt then
+                        removeQueueEntry(src)
+                        deferrals.update('Unova Roleplay | Priority accepted. Loading city...')
+                        Wait(750)
+                        deferrals.done()
+                        return
+                    end
+
+                    if os.time() - startedAt > 180 then
+                        removeQueueEntry(src)
+                        deferrals.done('Connection queue timed out. Please reconnect to Unova.')
+                        return
+                    end
+
+                    Wait(2500)
+                end
+            end)
+        end)
     end, 'GET', '', { ['x-api-key'] = API_KEY })
+end)
+
+AddEventHandler('playerDropped', function()
+    removeQueueEntry(source)
 end)
 
 CreateThread(function()
     Wait(1000)
-    print(('[Unova Dashboard] Bridge loaded. URL=%s API key configured=%s founder=%s'):format(
+    print(('[Unova Dashboard] Bridge loaded. URL=%s API key configured=%s access=Discord management role'):format(
         DASHBOARD_URL,
-        tostring(API_KEY_CONFIGURED),
-        FOUNDER_DISCORD_ID
+        tostring(API_KEY_CONFIGURED)
     ))
 end)
 

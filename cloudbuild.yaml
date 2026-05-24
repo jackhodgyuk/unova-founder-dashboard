@@ -3,11 +3,11 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/founderbot/founderbot:latest'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/founderbot/unova-management-dashboard:latest'
       - '.'
 
 images:
-  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/founderbot/founderbot:latest'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/founderbot/unova-management-dashboard:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

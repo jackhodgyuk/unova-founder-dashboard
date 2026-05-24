@@ -1,6 +1,6 @@
 local panelOpen = false
 
-RegisterNetEvent('unova:founder:openPanel', function(players)
+RegisterNetEvent('unova:admin:openPanel', function(players)
     panelOpen = true
     SetNuiFocus(true, true)
     SendNUIMessage({
@@ -9,14 +9,14 @@ RegisterNetEvent('unova:founder:openPanel', function(players)
     })
 end)
 
-RegisterNetEvent('unova:founder:updatePlayers', function(players)
+RegisterNetEvent('unova:admin:updatePlayers', function(players)
     SendNUIMessage({
         type = 'players',
         players = players or {}
     })
 end)
 
-RegisterNetEvent('unova:founder:notice', function(payload)
+RegisterNetEvent('unova:admin:notice', function(payload)
     SendNUIMessage({
         type = 'notice',
         message = payload.message,
@@ -32,12 +32,12 @@ RegisterNUICallback('close', function(_, cb)
 end)
 
 RegisterNUICallback('refresh', function(_, cb)
-    TriggerServerEvent('unova:founder:refreshPlayers')
+    TriggerServerEvent('unova:admin:refreshPlayers')
     cb({ ok = true })
 end)
 
 RegisterNUICallback('moderate', function(data, cb)
-    TriggerServerEvent('unova:founder:moderate', data)
+    TriggerServerEvent('unova:admin:moderate', data)
     cb({ ok = true })
 end)
 

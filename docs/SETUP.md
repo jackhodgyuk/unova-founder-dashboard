@@ -1,22 +1,56 @@
-# Unova Founder Dashboard Setup
+# Unova Management Dashboard Setup
 
-## 1. Install Node.js
-Install Node.js 18+ on your VPS/panel machine.
+## 1. Access Model
 
-## 2. Create database
-Create a MySQL database called:
+Dashboard access is Firebase-only.
 
-```sql
-unova_dashboard
+Give each Firebase user one of these custom claims:
+
+```json
+{ "unovaRole": "founder" }
+{ "unovaRole": "owner" }
+{ "unovaRole": "co_owner" }
+{ "unovaRole": "admin" }
 ```
 
-Then import:
+Optional but recommended for clean Discord mentions in tickets and dashboard action history:
+
+```json
+{ "discordId": "681156025365299220" }
+```
+
+Discord bot commands and FiveM `/adminui` use one Discord role:
+
+```env
+MANAGEMENT_ROLE_ID=your_management_role_id
+```
+
+Anyone with that Discord role can:
 
 ```txt
-sql/schema.sql
+Use management bot commands
+Use /whitelist
+Use the whitelist-management channel
+Open /adminui in city
+See private management tickets
 ```
 
-## 3. Configure env
+The ticket ladder uses these Discord role IDs:
+
+```env
+STAFF_ROLE_ID=
+SENIOR_STAFF_ROLE_ID=
+STAFF_MANAGER_ROLE_ID=
+SERVER_MANAGER_ROLE_ID=
+CO_OWNER_ROLE_ID=
+OWNER_ROLE_ID=
+FOUNDER_ROLE_ID=
+DEVELOPER_ROLE_ID=
+HEAD_DEVELOPER_ROLE_ID=
+```
+
+## 2. Configure Env
+
 Copy:
 
 ```txt
@@ -31,39 +65,70 @@ to:
 
 Fill in:
 
-```txt
+```env
+DASHBOARD_URL=
+FIVEM_API_KEY=
 DISCORD_BOT_TOKEN=
 DISCORD_GUILD_ID=
+DISCORD_BOT_USER_ID=
+DISCORD_BOT_ROLE_ID=
+DISCORD_LOG_CHANNEL_ID=
+MANAGEMENT_ROLE_ID=
 FOUNDER_DISCORD_ID=
 FOUNDER_ROLE_ID=
-MANAGEMENT_ROLE_IDS=
-ADMIN_UI_ROLE_IDS=
+OWNER_ROLE_ID=
+CO_OWNER_ROLE_ID=
+SERVER_MANAGER_ROLE_ID=
+STAFF_MANAGER_ROLE_ID=
+SENIOR_STAFF_ROLE_ID=
+STAFF_ROLE_ID=
+DEVELOPER_ROLE_ID=
+HEAD_DEVELOPER_ROLE_ID=
 WHITELISTED_ROLE_ID=
-DISCORD_LOG_CHANNEL_ID=
 DISCORD_TICKET_CATEGORY_ID=
 DISCORD_TICKET_CATEGORY_NAME=tickets
 DISCORD_BAN_ROLE_ID=
 DISCORD_BAN_REMOVE_ROLE_IDS=
+PRIORITY_ROLE_RULES=
 DISCORD_WHITELIST_CHANNEL_ID=
 DISCORD_WHITELIST_CHANNEL_NAME=whitelist-management
-DISCORD_BOT_USER_ID=
-DISCORD_BOT_ROLE_ID=
 MYSQL_HOST=
 MYSQL_USER=
 MYSQL_PASSWORD=
 MYSQL_DATABASE=unova_dashboard
-DASHBOARD_JWT_SECRET=make_this_random
-FIVEM_API_KEY=make_this_random_too
 ```
 
-## 4. Install packages
+## 3. Firebase Dashboard Login
+
+Enable Google sign-in in Firebase Authentication.
+
+Add the Cloud Run domain to Firebase Authentication authorized domains:
+
+```txt
+unova-founder-dashboard-git-597032418775.europe-west1.run.app
+```
+
+Then set a Firebase custom claim on your user, for example:
+
+```json
+{
+  "unovaRole": "founder",
+  "discordId": "681156025365299220"
+}
+```
+
+The dashboard rejects signed-in users with no `unovaRole`.
+
+## 4. Install Packages
+
 Run inside the main folder:
 
 ```bash
 npm install
 ```
 
-## 5. Start API and bot
+## 5. Start API And Bot
+
 For testing:
 
 ```bash
@@ -77,7 +142,8 @@ Or both together:
 npm run dev
 ```
 
-## 6. Add Discord bot permissions
+## 6. Discord Bot Permissions
+
 Invite the bot with these permissions:
 
 ```txt
@@ -88,109 +154,137 @@ Embed Links
 Use Application Commands
 Manage Messages
 Kick Members
-Ban Members
 Manage Roles
 Manage Channels
 ```
 
-The bot role must be above any role it needs to manage.
-
-## 7. Install FiveM resource
-Put this folder into your resources:
+The bot role must be above the roles it needs to add/remove, especially:
 
 ```txt
-fivem-resource
+WHITELISTED_ROLE_ID
+DISCORD_BAN_ROLE_ID
+DISCORD_BAN_REMOVE_ROLE_IDS
 ```
 
-Rename it if you want, for example:
+## 7. FiveM Resource
 
-```txt
-[unc]/unova_dashboard_bridge
-```
-
-Add to `server.cfg`:
+Put `unova_dashboard_bridge` into your XRealm resources and add:
 
 ```cfg
-set unova_dashboard_url "http://YOUR_API_IP:3001"
+set unova_dashboard_url "https://YOUR-CLOUD-RUN-URL"
 set unova_dashboard_key "SAME_AS_FIVEM_API_KEY"
+
 ensure unova_dashboard_bridge
 ```
 
-## 8. Dashboard moderation endpoint
-Your future frontend buttons should call:
+In-game, management can run:
 
 ```txt
-POST /dashboard/moderation/warn
-POST /dashboard/moderation/kick
-POST /dashboard/moderation/ban
+/adminui
 ```
 
-Example body:
+The resource sends the player's Discord ID to Cloud Run. Cloud Run checks whether that Discord member has `MANAGEMENT_ROLE_ID`.
 
-```json
-{
-  "discordId": "1234567890",
-  "license": "license:abc123",
-  "playerId": 1,
-  "reason": "Breaking Unova rules"
-}
-```
+## 8. Management Tickets
 
-## 9. Founder dev login
-Temporary testing endpoint:
+The bot registers:
 
 ```txt
-POST /auth/founder-dev-login
-```
-
-Body:
-
-```json
-{
-  "founderKey": "same_as_DASHBOARD_JWT_SECRET"
-}
-```
-
-Use the returned token as:
-
-```txt
-Authorization: Bearer TOKEN_HERE
-```
-
-## 10. Management ticket system
-
-The bot registers these slash commands when it starts:
-
-```txt
+/panel tickets
+/panel settings
 /ticket open
 /ticket close
 /add
 /remove
+/whitelist
 ```
+
+`/panel settings` is founder-only. `/panel tickets` posts a public Discord panel with:
+
+```txt
+Open Support Ticket
+Bug Report
+```
+
+Support tickets start with staff. Bug reports start with developer/head developer.
+
+Escalation flow:
+
+```txt
+Staff -> Senior Staff -> Staff Manager -> Server Manager -> Co-Owners/Owners -> Founder
+Developer/Head Developer -> Co-Owners/Owners -> Founder
+Developer/Head Developer -> Staff, if it should go back to support
+```
+
+Co-owners, owners, and founders can override normal player tickets. Only the founder can override locked tickets created by the founder or by FiveM moderation actions.
 
 Management tickets are private. By default, only these can see them:
 
 ```txt
-FOUNDER_ROLE_ID, if configured
-FOUNDER_DISCORD_ID
-MANAGEMENT_ROLE_IDS / TICKET_ACCESS_ROLE_IDS, if configured
+MANAGEMENT_ROLE_ID
+TICKET_ACCESS_ROLE_IDS, if configured
 DISCORD_BOT_ROLE_ID, if configured
 DISCORD_BOT_USER_ID
 Any user added with /add
 Any target Discord user automatically added by the FiveM moderation UI
 ```
 
-Set `DISCORD_TICKET_CATEGORY_ID` if you want the bot to create all tickets inside a specific Discord category. If no ID is set, it will use or create a category named by `DISCORD_TICKET_CATEGORY_NAME` (`tickets` by default).
+Set `DISCORD_TICKET_CATEGORY_ID` if you want all tickets in a specific Discord category. If no ID is set, the bot and API will use or create the category named by `DISCORD_TICKET_CATEGORY_NAME`.
 
-## 11. Anti-metagaming VC rule
+## 9. Ban Role Flow
+
+When management bans from the dashboard or in-city UI:
+
+```txt
+The player is banned/kicked in FiveM
+A private Discord ticket is opened
+DISCORD_BAN_ROLE_ID is added to the Discord member
+DISCORD_BAN_REMOVE_ROLE_IDS are removed from the Discord member
+The member is not Discord-banned
+```
+
+Role updates require the target player to have their Discord linked in FiveM.
+
+## 10. Priority Queue
+
+Priority is linked to Discord role IDs and can be managed from the dashboard Priority tab.
+
+Manual Cloud Run seed format:
+
+```env
+PRIORITY_ROLE_RULES=ROLE_ID:Owner Priority:1000,ROLE_ID:Staff Priority:500
+```
+
+The FiveM bridge calls Cloud Run while players connect:
+
+```txt
+/fivem/priority/check?discordId=...
+```
+
+Players see a Unova priority queue message during the Cfx deferral stage. The resource also includes a branded loadscreen.
+
+## 11. Whitelist Management
 
 Set:
 
-```txt
+```env
 WHITELISTED_ROLE_ID=
+DISCORD_WHITELIST_CHANNEL_ID=
 ```
 
-If a member has this role and their Discord ID is currently online in FiveM, the bot disconnects them from server voice channels and DMs:
+If no channel ID is set, the bot finds or creates `whitelist-management`.
+
+Management can either use:
+
+```txt
+/whitelist user_id:123456789012345678
+```
+
+or paste a Discord ID/mention in the whitelist channel.
+
+## 12. Anti-Metagaming VC Rule
+
+If a member has `WHITELISTED_ROLE_ID` and their Discord ID is online in FiveM, the bot disconnects them from server voice channels and DMs:
 
 ```txt
 You cannot metagame meaning VC and city.
@@ -198,53 +292,4 @@ This includes private VC calls.
 If you are found to be metagaming, you will receive an official warning.
 ```
 
-Discord bots cannot see or disconnect users from private DM calls. This system enforces the rule inside server voice channels and sends the private-call warning text.
-
-## 12. FiveM admin UI
-
-Add to `server.cfg`:
-
-```cfg
-set unova_dashboard_url "http://YOUR_API_IP:3001"
-set unova_dashboard_key "SAME_AS_FIVEM_API_KEY"
-set unova_founder_discord_id "YOUR_DISCORD_ID"
-add_ace identifier.discord:YOUR_DISCORD_ID unova.admin allow
-ensure unova_dashboard_bridge
-```
-
-In-game, allowed management can run:
-
-```txt
-/adminui
-```
-
-`/founderui` still works as an alias, but `/adminui` is the command to use. Access is allowed by founder Discord ID, ACE `unova.admin`, `FOUNDER_ROLE_ID`, `MANAGEMENT_ROLE_IDS`, or `ADMIN_UI_ROLE_IDS`.
-
-The UI lets management warn, kick, or ban online players. Each action:
-
-```txt
-Creates a private Discord ticket
-Logs the punishment to the API/database when available
-Queues the action back to FiveM
-Warns, kicks, or bans the player in city
-For ban actions, applies DISCORD_BAN_ROLE_ID and removes DISCORD_BAN_REMOVE_ROLE_IDS in Discord
-```
-
-## 13. Whitelist role channel
-
-Set `WHITELISTED_ROLE_ID`. The bot will use `DISCORD_WHITELIST_CHANNEL_ID` if set, otherwise it finds or creates `DISCORD_WHITELIST_CHANNEL_NAME`.
-
-Management can paste a Discord user ID in that channel or use:
-
-```txt
-/whitelist user_id:123456789012345678
-```
-
-## 14. Production changes you should add later
-- Replace founder dev login with Discord OAuth2.
-- Add a proper React/Next.js dashboard frontend.
-- Add staff roles/permissions.
-- Add unban flow.
-- Add punishment appeal tracking.
-- Add better player identifier linking.
-- Put the API behind HTTPS.
+Discord bots cannot see or disconnect users from private DM calls. This system enforces server voice channels and sends the warning text.
