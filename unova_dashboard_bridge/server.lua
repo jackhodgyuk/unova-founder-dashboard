@@ -56,10 +56,34 @@ local function getDiscordId(src)
     return string.sub(identifier, 9)
 end
 
-local function isFounder(src)
+local function hasLocalAdminAccess(src)
     if src == 0 then return true end
+    if IsPlayerAceAllowed(src, 'unova.admin') then return true end
     if IsPlayerAceAllowed(src, 'unova.founder') then return true end
     return getDiscordId(src) == FOUNDER_DISCORD_ID
+end
+
+local function checkAdminAccess(src, cb)
+    if hasLocalAdminAccess(src) then
+        cb(true)
+        return
+    end
+
+    local discordId = getDiscordId(src)
+    if not discordId then
+        cb(false)
+        return
+    end
+
+    PerformHttpRequest(apiUrl('/fivem/access/check?discordId=' .. urlEncode(discordId)), function(status, body)
+        if status ~= 200 or not body then
+            cb(false)
+            return
+        end
+
+        local data = json.decode(body)
+        cb(data and data.allowed == true)
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
 local function getPlayerInfo(playerId)
@@ -93,7 +117,7 @@ local function notifyFounder(src, message, ok)
         ok = ok == true
     })
     TriggerClientEvent('chat:addMessage', src, {
-        args = {'Unova Founder', message}
+        args = {'Unova Management', message}
     })
 end
 
@@ -167,20 +191,35 @@ local function pollModeration()
     end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
-RegisterCommand('founderui', function(src)
+local function openAdminPanel(src)
     if src == 0 then
-        print('[Unova Founder] /founderui can only be opened in-game.')
+        print('[Unova Management] /adminui can only be opened in-game.')
         return
     end
 
-    if not isFounder(src) then
+    checkAdminAccess(src, function(allowed)
+        if not allowed then
+            TriggerClientEvent('chat:addMessage', src, {
+                args = {'Unova Management', 'Management only.'}
+            })
+            return
+        end
+
+        TriggerClientEvent('unova:founder:openPanel', src, getPlayerList())
+    end)
+end
+
+RegisterCommand('adminui', function(src)
+    openAdminPanel(src)
+end, false)
+
+RegisterCommand('founderui', function(src)
+    if src ~= 0 then
         TriggerClientEvent('chat:addMessage', src, {
-            args = {'Unova Founder', 'Founder only.'}
+            args = {'Unova Management', 'Use /adminui. /founderui is now an alias.'}
         })
-        return
     end
-
-    TriggerClientEvent('unova:founder:openPanel', src, getPlayerList())
+    openAdminPanel(src)
 end, false)
 
 RegisterCommand('unovatest', function(src)
@@ -192,91 +231,98 @@ RegisterCommand('unovatest', function(src)
         notifyFounder(src, message, ok)
     end
 
-    if src ~= 0 and not isFounder(src) then
-        TriggerClientEvent('chat:addMessage', src, {
-            args = {'Unova Founder', 'Founder only.'}
+    checkAdminAccess(src, function(allowed)
+        if not allowed then
+            TriggerClientEvent('chat:addMessage', src, {
+                args = {'Unova Management', 'Management only.'}
+            })
+            return
+        end
+
+        reply(('Testing bridge URL %s | API key configured: %s'):format(DASHBOARD_URL, tostring(API_KEY_CONFIGURED)), true)
+
+        PerformHttpRequest(apiUrl('/health'), function(status, body, _, errorData)
+            if status == 200 then
+                reply('Health check OK: ' .. tostring(body or ''), true)
+            else
+                reply(('Health check failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
+            end
+        end, 'GET', '')
+
+        PerformHttpRequest(apiUrl('/fivem/update'), function(status, body, _, errorData)
+            if status == 200 then
+                reply('FiveM API key test OK. Website should receive city players.', true)
+            else
+                reply(('FiveM API key test failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
+            end
+        end, 'POST', json.encode({
+            serverName = GetConvar('sv_projectName', 'Unova'),
+            onlinePlayers = #getPlayerList(),
+            maxPlayers = GetConvarInt('sv_maxclients', 64),
+            players = getPlayerList()
+        }), {
+            ['Content-Type'] = 'application/json',
+            ['x-api-key'] = API_KEY
         })
-        return
-    end
-
-    reply(('Testing bridge URL %s | API key configured: %s'):format(DASHBOARD_URL, tostring(API_KEY_CONFIGURED)), true)
-
-    PerformHttpRequest(apiUrl('/health'), function(status, body, _, errorData)
-        if status == 200 then
-            reply('Health check OK: ' .. tostring(body or ''), true)
-        else
-            reply(('Health check failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
-        end
-    end, 'GET', '')
-
-    PerformHttpRequest(apiUrl('/fivem/update'), function(status, body, _, errorData)
-        if status == 200 then
-            reply('FiveM API key test OK. Website should receive city players.', true)
-        else
-            reply(('FiveM API key test failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
-        end
-    end, 'POST', json.encode({
-        serverName = GetConvar('sv_projectName', 'Unova'),
-        onlinePlayers = #getPlayerList(),
-        maxPlayers = GetConvarInt('sv_maxclients', 64),
-        players = getPlayerList()
-    }), {
-        ['Content-Type'] = 'application/json',
-        ['x-api-key'] = API_KEY
-    })
+    end)
 end, false)
 
 RegisterNetEvent('unova:founder:refreshPlayers', function()
     local src = source
-    if not isFounder(src) then return end
-    TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+    checkAdminAccess(src, function(allowed)
+        if not allowed then return end
+        TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+    end)
 end)
 
 RegisterNetEvent('unova:founder:moderate', function(data)
     local src = source
-    if not isFounder(src) then return end
     if type(data) ~= 'table' then return end
 
-    local action = tostring(data.action or '')
-    if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' then
-        notifyFounder(src, 'Invalid moderation action.', false)
-        return
-    end
+    checkAdminAccess(src, function(allowed)
+        if not allowed then return end
 
-    local targetId = tonumber(data.playerId)
-    local targetInfo = targetId and getPlayerInfo(targetId) or nil
-    if not targetInfo then
-        notifyFounder(src, 'That player is no longer online.', false)
-        return
-    end
-
-    local reason = tostring(data.reason or '')
-    if reason == '' then
-        notifyFounder(src, 'Reason is required.', false)
-        return
-    end
-
-    local payload = {
-        playerId = targetInfo.id,
-        playerName = targetInfo.name,
-        discordId = targetInfo.discordId,
-        license = targetInfo.license,
-        reason = reason,
-        moderatorDiscordId = getDiscordId(src) or FOUNDER_DISCORD_ID
-    }
-
-    PerformHttpRequest(apiUrl('/fivem/founder/moderation/' .. action), function(status, body, _, errorData)
-        if status == 200 then
-            notifyFounder(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
-            TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+        local action = tostring(data.action or '')
+        if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' then
+            notifyFounder(src, 'Invalid moderation action.', false)
             return
         end
 
-        notifyFounder(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(errorData or body or ''), false)
-    end, 'POST', json.encode(payload), {
-        ['Content-Type'] = 'application/json',
-        ['x-api-key'] = API_KEY
-    })
+        local targetId = tonumber(data.playerId)
+        local targetInfo = targetId and getPlayerInfo(targetId) or nil
+        if not targetInfo then
+            notifyFounder(src, 'That player is no longer online.', false)
+            return
+        end
+
+        local reason = tostring(data.reason or '')
+        if reason == '' then
+            notifyFounder(src, 'Reason is required.', false)
+            return
+        end
+
+        local payload = {
+            playerId = targetInfo.id,
+            playerName = targetInfo.name,
+            discordId = targetInfo.discordId,
+            license = targetInfo.license,
+            reason = reason,
+            moderatorDiscordId = getDiscordId(src) or FOUNDER_DISCORD_ID
+        }
+
+        PerformHttpRequest(apiUrl('/fivem/admin/moderation/' .. action), function(status, body, _, errorData)
+            if status == 200 then
+                notifyFounder(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
+                TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
+                return
+            end
+
+            notifyFounder(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(errorData or body or ''), false)
+        end, 'POST', json.encode(payload), {
+            ['Content-Type'] = 'application/json',
+            ['x-api-key'] = API_KEY
+        })
+    end)
 end)
 
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)

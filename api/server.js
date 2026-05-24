@@ -306,6 +306,43 @@ function cleanId(value) {
   return /^\d{15,25}$/.test(trimmed) ? trimmed : null;
 }
 
+function splitConfig(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function cleanIdList(...values) {
+  return [...new Set(values.flatMap((value) => splitConfig(value).map(cleanId).filter(Boolean)))];
+}
+
+function normalizeName(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function hasAnyRole(memberRoleIds, allowedRoleIds) {
+  const memberRoles = new Set(memberRoleIds || []);
+  return allowedRoleIds.some((roleId) => memberRoles.has(roleId));
+}
+
+function getManagementRoleIds() {
+  return cleanIdList(
+    process.env.FOUNDER_ROLE_ID,
+    process.env.MANAGEMENT_ROLE_IDS,
+    process.env.ADMIN_UI_ROLE_IDS
+  );
+}
+
+function getTicketAccessRoleIds() {
+  return cleanIdList(
+    process.env.FOUNDER_ROLE_ID,
+    process.env.MANAGEMENT_ROLE_IDS,
+    process.env.ADMIN_UI_ROLE_IDS,
+    process.env.TICKET_ACCESS_ROLE_IDS
+  );
+}
+
 function cleanAction(value) {
   return ['warn', 'kick', 'ban'].includes(value) ? value : null;
 }
@@ -363,9 +400,12 @@ async function safeQuery(sql, params = []) {
   }
 }
 
+function getTicketCategoryName() {
+  return process.env.DISCORD_TICKET_CATEGORY_NAME || process.env.TICKET_CATEGORY_NAME || 'tickets';
+}
+
 function buildTicketOverwrites(extraUserIds = []) {
   const guildId = cleanId(process.env.DISCORD_GUILD_ID);
-  const founderRoleId = cleanId(process.env.FOUNDER_ROLE_ID);
   const founderDiscordId = cleanId(process.env.FOUNDER_DISCORD_ID);
   const botRoleId = cleanId(process.env.DISCORD_BOT_ROLE_ID);
   const botUserId = cleanId(process.env.DISCORD_BOT_USER_ID);
@@ -382,7 +422,9 @@ function buildTicketOverwrites(extraUserIds = []) {
   }
 
   addOverwrite(guildId, 0, null, ticketDenyView);
-  addOverwrite(founderRoleId, 0, ticketAllow, null);
+  for (const roleId of getTicketAccessRoleIds()) {
+    addOverwrite(roleId, 0, ticketAllow, null);
+  }
   addOverwrite(founderDiscordId, 1, ticketAllow, null);
   addOverwrite(botRoleId, 0, ticketAllow, null);
   addOverwrite(botUserId, 1, ticketAllow, null);
@@ -394,14 +436,14 @@ function buildTicketOverwrites(extraUserIds = []) {
   return overwrites;
 }
 
-async function postDiscord(token, route, body) {
+async function discordRequest(method, token, route, body) {
   const response = await fetch(`${discordApiBase}${route}`, {
-    method: 'POST',
+    method,
     headers: {
       Authorization: `Bot ${token}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(10000)
   });
   const data = await response.json().catch(() => ({}));
@@ -413,6 +455,135 @@ async function postDiscord(token, route, body) {
   }
 
   return data;
+}
+
+async function getDiscord(token, route) {
+  return discordRequest('GET', token, route);
+}
+
+async function postDiscord(token, route, body) {
+  return discordRequest('POST', token, route, body);
+}
+
+async function patchDiscord(token, route, body) {
+  return discordRequest('PATCH', token, route, body);
+}
+
+async function fetchDiscordRoles(token, guildId) {
+  return getDiscord(token, `/guilds/${guildId}/roles`);
+}
+
+function roleIdsFromNames(roles, names) {
+  const wanted = new Set(splitConfig(names).map(normalizeName));
+  if (!wanted.size) return [];
+
+  return roles
+    .filter((role) => wanted.has(normalizeName(role.name)))
+    .map((role) => cleanId(role.id))
+    .filter(Boolean);
+}
+
+async function resolveConfiguredRoleIds(token, guildId, idValues = [], nameValues = []) {
+  const roleIds = cleanIdList(...idValues);
+  const names = nameValues.flatMap(splitConfig);
+  if (!names.length) return roleIds;
+
+  try {
+    const roles = await fetchDiscordRoles(token, guildId);
+    return [...new Set([...roleIds, ...roleIdsFromNames(roles, names.join(','))])];
+  } catch (error) {
+    console.warn(`[Unova API] Discord role lookup failed: ${error.response?.data?.message || error.message}`);
+    return roleIds;
+  }
+}
+
+async function resolveTicketCategoryId(token, guildId) {
+  const configuredCategoryId = cleanId(process.env.DISCORD_TICKET_CATEGORY_ID || process.env.TICKET_CATEGORY_ID);
+  if (configuredCategoryId) return configuredCategoryId;
+
+  const categoryName = getTicketCategoryName();
+  const channels = await getDiscord(token, `/guilds/${guildId}/channels`);
+  const existing = channels.find((channel) =>
+    channel.type === 4 && normalizeName(channel.name) === normalizeName(categoryName)
+  );
+  if (existing) return existing.id;
+
+  if (process.env.DISCORD_AUTO_CREATE_TICKET_CATEGORY === 'false') return null;
+
+  const category = await postDiscord(token, `/guilds/${guildId}/channels`, {
+    name: categoryName,
+    type: 4
+  });
+  return category.id;
+}
+
+async function getDiscordMember(token, guildId, userId) {
+  return getDiscord(token, `/guilds/${guildId}/members/${userId}`);
+}
+
+async function memberHasManagementAccess(discordId) {
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const userId = cleanId(discordId);
+  if (!userId) return false;
+  if (userId === cleanId(process.env.FOUNDER_DISCORD_ID)) return true;
+  if (!guildId || !token) return false;
+
+  const member = await getDiscordMember(token, guildId, userId).catch(() => null);
+  if (!member) return false;
+
+  const allowedRoleIds = await resolveConfiguredRoleIds(
+    token,
+    guildId,
+    [process.env.FOUNDER_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.ADMIN_UI_ROLE_IDS],
+    [process.env.MANAGEMENT_ROLE_NAMES, process.env.ADMIN_UI_ROLE_NAMES]
+  );
+  return hasAnyRole(member.roles || [], allowedRoleIds);
+}
+
+async function applyDiscordBanRole(moderationAction) {
+  if (moderationAction.action !== 'ban') return { skipped: 'not_ban' };
+
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const userId = cleanId(moderationAction.discordId);
+  if (!guildId || !token || !userId) return { skipped: 'missing_discord_config_or_user' };
+
+  const banRoleIds = await resolveConfiguredRoleIds(
+    token,
+    guildId,
+    [process.env.DISCORD_BAN_ROLE_ID || process.env.BAN_ROLE_ID],
+    [process.env.DISCORD_BAN_ROLE_NAME || process.env.BAN_ROLE_NAME || 'Banned']
+  );
+  const removeRoleIds = await resolveConfiguredRoleIds(
+    token,
+    guildId,
+    [process.env.DISCORD_BAN_REMOVE_ROLE_IDS || process.env.BAN_REMOVE_ROLE_IDS],
+    [process.env.DISCORD_BAN_REMOVE_ROLE_NAMES || process.env.BAN_REMOVE_ROLE_NAMES]
+  );
+
+  if (!banRoleIds.length && !removeRoleIds.length) return { skipped: 'no_role_config' };
+
+  try {
+    const member = await getDiscordMember(token, guildId, userId);
+    const nextRoles = new Set(member.roles || []);
+    for (const roleId of removeRoleIds) nextRoles.delete(roleId);
+    for (const roleId of banRoleIds) nextRoles.add(roleId);
+    await patchDiscord(token, `/guilds/${guildId}/members/${userId}`, {
+      roles: [...nextRoles]
+    });
+    return {
+      ok: true,
+      addedRoleIds: banRoleIds,
+      removedRoleIds: removeRoleIds
+    };
+  } catch (error) {
+    console.warn(`[Unova API] Discord ban role update failed: ${error.response?.data?.message || error.message}`);
+    return {
+      ok: false,
+      error: error.response?.data?.message || error.message
+    };
+  }
 }
 
 async function createDiscordModerationTicket(moderationAction) {
@@ -434,14 +605,17 @@ async function createDiscordModerationTicket(moderationAction) {
     permission_overwrites: buildTicketOverwrites(targetDiscordId ? [targetDiscordId] : [])
   };
 
-  const categoryId = cleanId(process.env.DISCORD_TICKET_CATEGORY_ID || process.env.TICKET_CATEGORY_ID);
-  if (categoryId) body.parent_id = categoryId;
-
   try {
+    const categoryId = await resolveTicketCategoryId(token, guildId).catch((error) => {
+      console.warn(`[Unova API] Ticket category lookup failed: ${error.response?.data?.message || error.message}`);
+      return null;
+    });
+    if (categoryId) body.parent_id = categoryId;
+
     const channel = await postDiscord(token, `/guilds/${guildId}/channels`, body);
     const founderRoleId = cleanId(process.env.FOUNDER_ROLE_ID);
     const founderDiscordId = cleanId(process.env.FOUNDER_DISCORD_ID);
-    const founderLine = founderRoleId ? `Founder role: <@&${founderRoleId}>` : `Founder: <@${founderDiscordId}>`;
+    const founderLine = founderRoleId ? `Management role: <@&${founderRoleId}>` : `Management: <@${founderDiscordId}>`;
     const targetLine = targetDiscordId
       ? `Target Discord: <@${targetDiscordId}> (${targetDiscordId})`
       : 'Target Discord: not linked/provided';
@@ -458,7 +632,7 @@ async function createDiscordModerationTicket(moderationAction) {
         `License: ${moderationAction.license || 'unknown'}`,
         `Moderator: <@${moderationAction.moderatorDiscordId}>`,
         '',
-        'Only founder access, bot access, and explicitly added users can see this ticket.'
+        'Only management access, bot access, and explicitly added users can see this ticket.'
       ].join('\n'),
       allowed_mentions: {
         parse: ['roles', 'users']
@@ -526,8 +700,9 @@ async function recordModerationAction(action, body, moderatorDiscordId, source) 
     );
   }
 
+  const discordRoleUpdate = await applyDiscordBanRole(moderationAction);
   const ticket = await createDiscordModerationTicket(moderationAction);
-  return { status: 200, payload: { ok: true, moderationAction, ticket } };
+  return { status: 200, payload: { ok: true, moderationAction, discordRoleUpdate, ticket } };
 }
 
 function getMemoryStatus() {
@@ -637,6 +812,17 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/fivem/access/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      allowed: await memberHasManagementAccess(discordId),
+      discordId
+    });
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/dashboard/status') {
     if (!requireFounder(req, res)) return;
 
@@ -665,13 +851,13 @@ async function handleRequest(req, res) {
     return;
   }
 
-  const fivemModerationMatch = pathname.match(/^\/fivem\/founder\/moderation\/([^/]+)$/);
+  const fivemModerationMatch = pathname.match(/^\/fivem\/(?:founder|admin)\/moderation\/([^/]+)$/);
   if (req.method === 'POST' && fivemModerationMatch) {
     if (!requireFiveM(req, res)) return;
 
     const body = await readBody(req);
-    if (cleanId(body.moderatorDiscordId) !== cleanId(process.env.FOUNDER_DISCORD_ID)) {
-      sendJson(res, 403, { error: 'Founder access required.' });
+    if (!await memberHasManagementAccess(body.moderatorDiscordId)) {
+      sendJson(res, 403, { error: 'Management access required.' });
       return;
     }
 

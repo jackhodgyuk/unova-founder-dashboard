@@ -36,9 +36,16 @@ DISCORD_BOT_TOKEN=
 DISCORD_GUILD_ID=
 FOUNDER_DISCORD_ID=
 FOUNDER_ROLE_ID=
+MANAGEMENT_ROLE_IDS=
+ADMIN_UI_ROLE_IDS=
 WHITELISTED_ROLE_ID=
 DISCORD_LOG_CHANNEL_ID=
 DISCORD_TICKET_CATEGORY_ID=
+DISCORD_TICKET_CATEGORY_NAME=tickets
+DISCORD_BAN_ROLE_ID=
+DISCORD_BAN_REMOVE_ROLE_IDS=
+DISCORD_WHITELIST_CHANNEL_ID=
+DISCORD_WHITELIST_CHANNEL_NAME=whitelist-management
 DISCORD_BOT_USER_ID=
 DISCORD_BOT_ROLE_ID=
 MYSQL_HOST=
@@ -150,7 +157,7 @@ Use the returned token as:
 Authorization: Bearer TOKEN_HERE
 ```
 
-## 10. Founder ticket system
+## 10. Management ticket system
 
 The bot registers these slash commands when it starts:
 
@@ -161,18 +168,19 @@ The bot registers these slash commands when it starts:
 /remove
 ```
 
-Founder tickets are private. By default, only these can see them:
+Management tickets are private. By default, only these can see them:
 
 ```txt
 FOUNDER_ROLE_ID, if configured
 FOUNDER_DISCORD_ID
+MANAGEMENT_ROLE_IDS / TICKET_ACCESS_ROLE_IDS, if configured
 DISCORD_BOT_ROLE_ID, if configured
 DISCORD_BOT_USER_ID
 Any user added with /add
 Any target Discord user automatically added by the FiveM moderation UI
 ```
 
-Set `DISCORD_TICKET_CATEGORY_ID` if you want the bot to create all tickets inside a specific Discord category.
+Set `DISCORD_TICKET_CATEGORY_ID` if you want the bot to create all tickets inside a specific Discord category. If no ID is set, it will use or create a category named by `DISCORD_TICKET_CATEGORY_NAME` (`tickets` by default).
 
 ## 11. Anti-metagaming VC rule
 
@@ -192,7 +200,7 @@ If you are found to be metagaming, you will receive an official warning.
 
 Discord bots cannot see or disconnect users from private DM calls. This system enforces the rule inside server voice channels and sends the private-call warning text.
 
-## 12. FiveM founder UI
+## 12. FiveM admin UI
 
 Add to `server.cfg`:
 
@@ -200,31 +208,39 @@ Add to `server.cfg`:
 set unova_dashboard_url "http://YOUR_API_IP:3001"
 set unova_dashboard_key "SAME_AS_FIVEM_API_KEY"
 set unova_founder_discord_id "YOUR_DISCORD_ID"
+add_ace identifier.discord:YOUR_DISCORD_ID unova.admin allow
 ensure unova_dashboard_bridge
 ```
 
-In-game, the founder can run:
+In-game, allowed management can run:
 
 ```txt
-/founderui
+/adminui
 ```
 
-The UI lets the founder warn, kick, or ban online players. Each action:
+`/founderui` still works as an alias, but `/adminui` is the command to use. Access is allowed by founder Discord ID, ACE `unova.admin`, `FOUNDER_ROLE_ID`, `MANAGEMENT_ROLE_IDS`, or `ADMIN_UI_ROLE_IDS`.
+
+The UI lets management warn, kick, or ban online players. Each action:
 
 ```txt
 Creates a private Discord ticket
 Logs the punishment to the API/database when available
 Queues the action back to FiveM
 Warns, kicks, or bans the player in city
+For ban actions, applies DISCORD_BAN_ROLE_ID and removes DISCORD_BAN_REMOVE_ROLE_IDS in Discord
 ```
 
-Access is checked server-side by Discord identifier or ACE permission:
+## 13. Whitelist role channel
 
-```cfg
-add_ace identifier.discord:YOUR_DISCORD_ID unova.founder allow
+Set `WHITELISTED_ROLE_ID`. The bot will use `DISCORD_WHITELIST_CHANNEL_ID` if set, otherwise it finds or creates `DISCORD_WHITELIST_CHANNEL_NAME`.
+
+Management can paste a Discord user ID in that channel or use:
+
+```txt
+/whitelist user_id:123456789012345678
 ```
 
-## 13. Production changes you should add later
+## 14. Production changes you should add later
 - Replace founder dev login with Discord OAuth2.
 - Add a proper React/Next.js dashboard frontend.
 - Add staff roles/permissions.
