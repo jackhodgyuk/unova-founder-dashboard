@@ -14,6 +14,10 @@ const serverName = document.getElementById('serverName');
 const serverCount = document.getElementById('serverCount');
 const serverUpdated = document.getElementById('serverUpdated');
 const queueCount = document.getElementById('queueCount');
+const actionsQueueCount = document.getElementById('actionsQueueCount');
+const statOnline = document.getElementById('statOnline');
+const statQueue = document.getElementById('statQueue');
+const statUpdated = document.getElementById('statUpdated');
 const actionsList = document.getElementById('actionsList');
 const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
@@ -56,10 +60,18 @@ function formatUpdated(value) {
 function renderStatus(data) {
   const fivem = data.fivem || {};
   players = data.players || fivem.players || [];
+  const onlinePlayers = fivem.onlinePlayers || players.length;
+  const maxPlayers = fivem.maxPlayers || 0;
+  const queueLength = data.queueLength || 0;
+  const updatedLabel = formatUpdated(fivem.updatedAt);
   serverName.textContent = fivem.serverName || 'Unova';
-  serverCount.textContent = `${fivem.onlinePlayers || players.length} / ${fivem.maxPlayers || 0}`;
-  serverUpdated.textContent = formatUpdated(fivem.updatedAt);
-  queueCount.textContent = `Queue ${data.queueLength || 0}`;
+  serverCount.textContent = `${onlinePlayers} / ${maxPlayers}`;
+  serverUpdated.textContent = updatedLabel;
+  queueCount.textContent = queueLength;
+  actionsQueueCount.textContent = `Queue ${queueLength}`;
+  statOnline.textContent = String(onlinePlayers);
+  statQueue.textContent = String(queueLength);
+  statUpdated.textContent = updatedLabel.replace('Updated ', '');
 
   if (selectedPlayer) {
     selectedPlayer = players.find((player) => player.id === selectedPlayer.id) || null;
@@ -76,7 +88,7 @@ function renderPlayers() {
   if (!players.length) {
     const row = document.createElement('div');
     row.className = 'player-row muted';
-    row.innerHTML = '<span>No online players reported yet.</span><span></span><span></span><span></span>';
+    row.innerHTML = '<span>No online players reported yet.</span><span>-</span><span>-</span><span>-</span>';
     playersList.appendChild(row);
     return;
   }
@@ -86,7 +98,7 @@ function renderPlayers() {
     row.type = 'button';
     row.className = `player-row${selectedPlayer && selectedPlayer.id === player.id ? ' active' : ''}`;
     row.innerHTML = [
-      `<span>${escapeHtml(player.name || 'Unknown')}</span>`,
+      `<span><b>${escapeHtml(player.name || 'Unknown')}</b><small>${escapeHtml(player.license || 'No license')}</small></span>`,
       `<span>${player.id || '-'}</span>`,
       `<span>${player.discordId || 'not linked'}</span>`,
       `<span>${player.ping || '-'}</span>`
@@ -122,7 +134,7 @@ function renderActions(actions) {
 function selectPlayer(player) {
   selectedPlayer = player;
   selectedName.textContent = player.name || 'Unknown';
-  selectedMeta.textContent = `FiveM ID ${player.id || '-'} | Discord ${player.discordId || 'not linked'} | ${player.license || 'no license'}`;
+  selectedMeta.textContent = `FiveM ID ${player.id || '-'} / Discord ${player.discordId || 'not linked'} / ${player.license || 'no license'}`;
   emptySelection.classList.add('hidden');
   selectedPanel.classList.remove('hidden');
   actionNotice.textContent = '';
@@ -214,27 +226,4 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     actionNotice.textContent = `${action} submitted...`;
     const response = await api(`/dashboard/moderation/${action}`, {
       method: 'POST',
-      body: JSON.stringify({
-        playerId: selectedPlayer.id,
-        playerName: selectedPlayer.name,
-        discordId: selectedPlayer.discordId,
-        license: selectedPlayer.license,
-        reason: actionReason
-      })
-    }).catch(() => null);
-
-    if (!response || !response.ok) {
-      actionNotice.textContent = 'Action failed.';
-      return;
-    }
-
-    const data = await response.json();
-    actionNotice.textContent = data.ticket
-      ? `${action} sent. Ticket #${data.ticket.name} opened.`
-      : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
-    reason.value = '';
-    await loadStatus();
-  });
-});
-
-setAuthState(Boolean(authToken));
+      body: JS

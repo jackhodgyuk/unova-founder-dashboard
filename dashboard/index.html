@@ -4,27 +4,43 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Unova Founder Dashboard</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="/dashboard/styles.css">
   </head>
   <body>
     <main class="shell">
       <aside class="sidebar">
-        <div class="brand">
-          <span class="mark">UN</span>
+        <div class="brand-panel">
+          <span class="mark"><span>UN</span></span>
           <div>
-            <p>Unova</p>
-            <h1>Founder Dashboard</h1>
+            <p>Unova Network</p>
+            <h1>Founder Control</h1>
           </div>
         </div>
 
         <nav class="nav">
-          <button class="active" type="button" data-view="players">Players</button>
-          <button type="button" data-view="actions">Actions</button>
+          <button class="active" type="button" data-view="players">
+            <span class="nav-icon">P</span>
+            <span>Players</span>
+          </button>
+          <button type="button" data-view="actions">
+            <span class="nav-icon">A</span>
+            <span>Actions</span>
+          </button>
         </nav>
 
         <section class="status-strip">
-          <span id="serverName">Unova</span>
-          <strong id="serverCount">0 / 0</strong>
+          <span>City Status</span>
+          <strong id="serverName">Unova</strong>
+          <div class="status-grid">
+            <div>
+              <small>Online</small>
+              <b id="serverCount">0 / 0</b>
+            </div>
+            <div>
+              <small>Queue</small>
+              <b id="queueCount">0</b>
+            </div>
+          </div>
           <small id="serverUpdated">Waiting for FiveM</small>
         </section>
       </aside>
@@ -32,7 +48,9 @@
       <section class="content">
         <section id="loginView" class="login-view">
           <form id="loginForm" class="login-panel">
-            <h2>Founder Login</h2>
+            <span class="login-mark">UN</span>
+            <p>Founder Access</p>
+            <h2>Secure Dashboard</h2>
             <label for="founderKey">Founder key</label>
             <input id="founderKey" name="founderKey" type="password" autocomplete="current-password" required>
             <button type="submit">Unlock Dashboard</button>
@@ -43,9 +61,23 @@
         <section id="appView" class="app-view hidden">
           <header class="toolbar">
             <div>
-              <p id="authLabel">Founder access</p>
-              <h2>Live Moderation</h2>
+              <p id="authLabel">Founder Access</p>
+              <h2>Unova Moderation Core</h2>
             </div>
+            <section class="quick-stats">
+              <div>
+                <span>Online</span>
+                <strong id="statOnline">0</strong>
+              </div>
+              <div>
+                <span>Queue</span>
+                <strong id="statQueue">0</strong>
+              </div>
+              <div>
+                <span>Last Sync</span>
+                <strong id="statUpdated">Waiting</strong>
+              </div>
+            </section>
             <div class="toolbar-actions">
               <button id="refreshButton" type="button">Refresh</button>
               <button id="logoutButton" type="button">Lock</button>
@@ -64,38 +96,9 @@
             </section>
 
             <aside class="moderation-panel">
-              <div id="emptySelection" class="empty-state">Select an online player.</div>
-              <div id="selectedPanel" class="hidden">
-                <div class="selected-player">
-                  <span id="selectedName"></span>
-                  <small id="selectedMeta"></small>
-                </div>
-
-                <label for="reason">Reason</label>
-                <textarea id="reason" rows="6" placeholder="Required"></textarea>
-
-                <div class="action-grid">
-                  <button class="warn" type="button" data-action="warn">Warn</button>
-                  <button class="kick" type="button" data-action="kick">Kick</button>
-                  <button class="ban" type="button" data-action="ban">Ban</button>
-                </div>
-
-                <p id="actionNotice"></p>
+              <div id="emptySelection" class="empty-state">
+                <span>UN</span>
+                <strong>No Player Selected</strong>
+                <small>Live moderation tools activate when a player is selected.</small>
               </div>
-            </aside>
-          </section>
-
-          <section id="actionsView" class="actions-view hidden">
-            <div class="section-heading">
-              <h3>Recent Actions</h3>
-              <span id="queueCount">Queue 0</span>
-            </div>
-            <div id="actionsList" class="actions-list"></div>
-          </section>
-        </section>
-      </section>
-    </main>
-
-    <script src="app.js"></script>
-  </body>
-</html>
+        
