@@ -8,6 +8,7 @@ loadEnvFile();
 
 const dashboardDir = path.join(__dirname, '..', 'dashboard');
 const discordApiBase = 'https://discord.com/api/v10';
+const firebaseCertUrl = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
 const ticketAllow = [
   1024n, // ViewChannel
   2048n, // SendMessages
@@ -21,7 +22,9 @@ const state = {
   fivemOnlinePlayers: [],
   latestStatus: null,
   moderationQueue: [],
-  recentModerationActions: []
+  recentModerationActions: [],
+  firebaseCerts: null,
+  firebaseCertsExpiresAt: 0
 };
 
 const server = http.createServer((req, res) => {
@@ -143,12 +146,108 @@ function base64urlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function signFounderToken() {
+function decodeBase64urlJson(value) {
+  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+}
+
+function getFirebasePublicConfig() {
+  const config = {
+    apiKey: process.env.FIREBASE_API_KEY,
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    appId: process.env.FIREBASE_APP_ID,
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+  };
+
+  Object.keys(config).forEach((key) => {
+    if (!config[key]) delete config[key];
+  });
+
+  const configured = Boolean(config.apiKey && config.authDomain && config.projectId && config.appId);
+  return { configured, config: configured ? config : null };
+}
+
+function getAllowedFounderEmails() {
+  return String(process.env.FOUNDER_FIREBASE_EMAIL || process.env.FOUNDER_EMAIL || '')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isAllowedFirebaseFounder(user) {
+  const allowedUid = process.env.FOUNDER_FIREBASE_UID;
+  if (allowedUid && user.uid === allowedUid) return true;
+
+  const allowedEmails = getAllowedFounderEmails();
+  return Boolean(
+    user.email
+      && user.emailVerified
+      && allowedEmails.includes(user.email.toLowerCase())
+  );
+}
+
+async function fetchFirebaseCerts() {
+  if (state.firebaseCerts && Date.now() < state.firebaseCertsExpiresAt) {
+    return state.firebaseCerts;
+  }
+
+  const response = await fetch(firebaseCertUrl, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error(`Firebase cert fetch failed with ${response.status}`);
+
+  const cacheControl = response.headers.get('cache-control') || '';
+  const maxAge = Number(cacheControl.match(/max-age=(\d+)/)?.[1] || 3600);
+  state.firebaseCerts = await response.json();
+  state.firebaseCertsExpiresAt = Date.now() + (maxAge * 1000);
+  return state.firebaseCerts;
+}
+
+async function verifyFirebaseIdToken(idToken) {
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  if (!projectId) throw new Error('Firebase project is not configured.');
+
+  const [encodedHeader, encodedPayload, encodedSignature] = String(idToken || '').split('.');
+  if (!encodedHeader || !encodedPayload || !encodedSignature) throw new Error('Malformed Firebase token.');
+
+  const header = decodeBase64urlJson(encodedHeader);
+  const payload = decodeBase64urlJson(encodedPayload);
+  if (header.alg !== 'RS256' || !header.kid) throw new Error('Unsupported Firebase token.');
+  if (payload.aud !== projectId) throw new Error('Firebase token audience mismatch.');
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) throw new Error('Firebase token issuer mismatch.');
+
+  const now = Math.floor(Date.now() / 1000);
+  if (!payload.sub || payload.exp < now || payload.iat > now + 60) {
+    throw new Error('Firebase token is expired or invalid.');
+  }
+
+  const certs = await fetchFirebaseCerts();
+  const cert = certs[header.kid];
+  if (!cert) throw new Error('Firebase signing cert not found.');
+
+  const verifier = crypto.createVerify('RSA-SHA256');
+  verifier.update(`${encodedHeader}.${encodedPayload}`);
+  verifier.end();
+  const valid = verifier.verify(cert, Buffer.from(encodedSignature, 'base64url'));
+  if (!valid) throw new Error('Firebase token signature mismatch.');
+
+  return {
+    uid: payload.user_id || payload.sub,
+    email: payload.email || null,
+    emailVerified: payload.email_verified === true,
+    name: payload.name || null,
+    picture: payload.picture || null
+  };
+}
+
+function signFounderToken(founder = {}) {
   const secret = process.env.DASHBOARD_JWT_SECRET;
   const header = base64urlJson({ alg: 'HS256', typ: 'JWT' });
   const payload = base64urlJson({
     discordId: process.env.FOUNDER_DISCORD_ID,
     role: 'Founder',
+    provider: founder.provider || 'founder-key',
+    firebaseUid: founder.firebaseUid,
+    email: founder.email,
     exp: Math.floor(Date.now() / 1000) + (12 * 60 * 60)
   });
   const signature = crypto.createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
@@ -459,6 +558,11 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/dashboard/firebase-config') {
+    sendJson(res, 200, getFirebasePublicConfig());
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/auth/founder-dev-login') {
     const body = await readBody(req);
     if (body.founderKey !== process.env.DASHBOARD_JWT_SECRET) {
@@ -466,6 +570,32 @@ async function handleRequest(req, res) {
       return;
     }
     sendJson(res, 200, { token: signFounderToken() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/auth/firebase-login') {
+    const body = await readBody(req);
+    let firebaseUser;
+    try {
+      firebaseUser = await verifyFirebaseIdToken(body.idToken);
+    } catch (error) {
+      console.warn(`[Unova API] Firebase login rejected: ${error.message}`);
+      sendJson(res, 401, { error: 'Invalid Firebase login.' });
+      return;
+    }
+
+    if (!isAllowedFirebaseFounder(firebaseUser)) {
+      sendJson(res, 403, { error: 'Firebase account is not allowed for founder access.' });
+      return;
+    }
+
+    sendJson(res, 200, {
+      token: signFounderToken({
+        provider: 'firebase',
+        firebaseUid: firebaseUser.uid,
+        email: firebaseUser.email
+      })
+    });
     return;
   }
 

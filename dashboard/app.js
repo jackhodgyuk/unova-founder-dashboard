@@ -1,8 +1,11 @@
 const tokenKey = 'unovaFounderToken';
+const shell = document.querySelector('.shell');
 const loginView = document.getElementById('loginView');
 const appView = document.getElementById('appView');
 const loginForm = document.getElementById('loginForm');
 const loginError = document.getElementById('loginError');
+const firebaseLoginButton = document.getElementById('firebaseLoginButton');
+const loginDivider = document.getElementById('loginDivider');
 const playersList = document.getElementById('playersList');
 const selectedPanel = document.getElementById('selectedPanel');
 const emptySelection = document.getElementById('emptySelection');
@@ -26,8 +29,11 @@ let authToken = localStorage.getItem(tokenKey);
 let players = [];
 let selectedPlayer = null;
 let refreshTimer = null;
+let firebaseAuth = null;
+let firebaseProvider = null;
 
 function setAuthState(isAuthed) {
+  shell.classList.toggle('locked', !isAuthed);
   loginView.classList.toggle('hidden', isAuthed);
   appView.classList.toggle('hidden', !isAuthed);
   if (isAuthed) {
@@ -37,6 +43,10 @@ function setAuthState(isAuthed) {
   } else {
     clearInterval(refreshTimer);
   }
+}
+
+function setLoginError(message) {
+  loginError.textContent = message || '';
 }
 
 function api(path, options = {}) {
@@ -173,8 +183,12 @@ async function loadStatus() {
 
 loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  loginError.textContent = '';
+  setLoginError('');
   const founderKey = new FormData(loginForm).get('founderKey');
+  if (!founderKey) {
+    setLoginError('Founder key is required.');
+    return;
+  }
 
   const response = await fetch('/auth/founder-dev-login', {
     method: 'POST',
@@ -183,7 +197,7 @@ loginForm.addEventListener('submit', async (event) => {
   }).catch(() => null);
 
   if (!response || !response.ok) {
-    loginError.textContent = 'Founder key rejected.';
+    setLoginError('Founder key rejected.');
     return;
   }
 
@@ -197,6 +211,9 @@ loginForm.addEventListener('submit', async (event) => {
 document.getElementById('logoutButton').addEventListener('click', () => {
   localStorage.removeItem(tokenKey);
   authToken = null;
+  if (firebaseAuth) {
+    firebaseAuth.signOut().catch(() => null);
+  }
   setAuthState(false);
 });
 
@@ -249,4 +266,59 @@ document.querySelectorAll('[data-action]').forEach((button) => {
   });
 });
 
+async function setupFirebaseLogin() {
+  const response = await fetch('/dashboard/firebase-config').catch(() => null);
+  if (!response || !response.ok) return;
+
+  const { configured, config } = await response.json();
+  if (!configured) return;
+
+  try {
+    const [{ initializeApp }, { getAuth, GoogleAuthProvider, signInWithPopup }] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
+    ]);
+    const app = initializeApp(config);
+    firebaseAuth = getAuth(app);
+    firebaseProvider = new GoogleAuthProvider();
+    firebaseProvider.setCustomParameters({ prompt: 'select_account' });
+    firebaseLoginButton.classList.remove('hidden');
+    loginDivider.classList.remove('hidden');
+
+    firebaseLoginButton.addEventListener('click', async () => {
+      setLoginError('');
+      firebaseLoginButton.disabled = true;
+      firebaseLoginButton.textContent = 'Checking Google...';
+      try {
+        const credential = await signInWithPopup(firebaseAuth, firebaseProvider);
+        const idToken = await credential.user.getIdToken();
+        const loginResponse = await fetch('/auth/firebase-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken })
+        });
+
+        if (!loginResponse.ok) {
+          setLoginError('Google account is not allowed for founder access.');
+          return;
+        }
+
+        const data = await loginResponse.json();
+        authToken = data.token;
+        localStorage.setItem(tokenKey, authToken);
+        loginForm.reset();
+        setAuthState(true);
+      } catch {
+        setLoginError('Google sign-in could not complete.');
+      } finally {
+        firebaseLoginButton.disabled = false;
+        firebaseLoginButton.textContent = 'Continue with Google';
+      }
+    });
+  } catch {
+    setLoginError('Firebase login is not configured yet.');
+  }
+}
+
+setupFirebaseLogin();
 setAuthState(Boolean(authToken));

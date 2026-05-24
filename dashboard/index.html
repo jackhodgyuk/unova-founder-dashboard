@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/dashboard/styles.css">
   </head>
   <body>
-    <main class="shell">
+    <main class="shell locked">
       <aside class="sidebar">
         <div class="brand-panel">
           <span class="mark"><span>UN</span></span>
@@ -51,8 +51,10 @@
             <span class="login-mark">UN</span>
             <p>Founder Access</p>
             <h2>Secure Dashboard</h2>
-            <label for="founderKey">Founder key</label>
-            <input id="founderKey" name="founderKey" type="password" autocomplete="current-password" required>
+            <button id="firebaseLoginButton" class="firebase-login hidden" type="button">Continue with Google</button>
+            <div id="loginDivider" class="login-divider hidden"><span>or</span></div>
+            <label for="founderKey">Founder key fallback</label>
+            <input id="founderKey" name="founderKey" type="password" autocomplete="current-password">
             <button type="submit">Unlock Dashboard</button>
             <p id="loginError"></p>
           </form>

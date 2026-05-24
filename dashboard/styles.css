@@ -57,6 +57,14 @@ button {
   min-height: 100vh;
 }
 
+.shell.locked {
+  grid-template-columns: 1fr;
+}
+
+.shell.locked .sidebar {
+  display: none;
+}
+
 .sidebar {
   position: relative;
   display: flex;
@@ -283,6 +291,39 @@ button {
     linear-gradient(135deg, var(--cyan), var(--blue)),
     var(--cyan);
   color: #031014;
+}
+
+.login-panel button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.login-panel .firebase-login {
+  border: 1px solid rgba(245, 248, 251, 0.18);
+  background: #f7fbff;
+  color: #121821;
+}
+
+.login-panel .firebase-login:hover {
+  background: #ffffff;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
 }
 
 #loginError,
