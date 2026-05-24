@@ -1,0 +1,26 @@
+{
+  "name": "unova-founder-dashboard",
+  "version": "1.0.0",
+  "description": "Unova Founder Dashboard starter: Discord + FiveM moderation bridge",
+  "main": "api/server.js",
+  "scripts": {
+    "start": "node server.js",
+    "api": "node api/server.js",
+    "bot": "node bot/index.js",
+    "dev": "concurrently \"npm run api\" \"npm run bot\""
+  },
+  "dependencies": {
+    "axios": "latest",
+    "bcryptjs": "latest",
+    "cors": "latest",
+    "discord.js": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "jsonwebtoken": "latest",
+    "mysql2": "latest",
+    "socket.io": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest"
+  }
+}

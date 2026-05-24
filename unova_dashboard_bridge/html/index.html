@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Unova Founder Panel</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main id="panel" class="panel hidden">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Unova</p>
+          <h1>Founder Panel</h1>
+        </div>
+        <div class="actions">
+          <button id="refresh" type="button">Refresh</button>
+          <button id="close" type="button">Close</button>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="players">
+          <div class="section-title">Online Players</div>
+          <div id="players" class="player-list"></div>
+        </aside>
+
+        <section class="details">
+          <div id="empty" class="empty">Select a player to warn, kick, or ban.</div>
+          <div id="moderation" class="moderation hidden">
+            <div class="player-card">
+              <span id="playerName"></span>
+              <small id="playerMeta"></small>
+            </div>
+
+            <label for="reason">Reason</label>
+            <textarea id="reason" rows="5" placeholder="Required reason"></textarea>
+
+            <div class="moderation-actions">
+              <button class="warn" data-action="warn" type="button">Warn</button>
+              <button class="kick" data-action="kick" type="button">Kick</button>
+              <button class="ban" data-action="ban" type="button">Ban</button>
+            </div>
+
+            <p id="notice" class="notice"></p>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+CREATE TABLE IF NOT EXISTS linked_users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  discord_id VARCHAR(50) UNIQUE,
+  citizenid VARCHAR(64),
+  license VARCHAR(255),
+  steam VARCHAR(255),
+  last_name VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS punishments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  action ENUM('warn','kick','ban') NOT NULL,
+  discord_id VARCHAR(50),
+  citizenid VARCHAR(64),
+  license VARCHAR(255),
+  reason TEXT NOT NULL,
+  moderator_discord_id VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS fivem_bans (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  license VARCHAR(255) NOT NULL,
+  discord_id VARCHAR(50),
+  citizenid VARCHAR(64),
+  reason TEXT NOT NULL,
+  moderator_discord_id VARCHAR(50) NOT NULL,
+  active TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_status (
+  id INT PRIMARY KEY DEFAULT 1,
+  server_name VARCHAR(100),
+  online_players INT DEFAULT 0,
+  max_players INT DEFAULT 0,
+  players_json JSON,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
