@@ -1,6 +1,37 @@
-local DASHBOARD_URL = GetConvar('unova_dashboard_url', 'http://127.0.0.1:3001')
+local RAW_DASHBOARD_URL = GetConvar('unova_dashboard_url', 'https://unova-founder-dashboard-git-597032418775.europe-west1.run.app')
 local API_KEY = GetConvar('unova_dashboard_key', 'change_this_fivem_secret')
 local FOUNDER_DISCORD_ID = GetConvar('unova_founder_discord_id', '681156025365299220')
+
+local function normalizeDashboardUrl(value)
+    local normalized = tostring(value or '')
+    normalized = normalized:gsub('%s+', '')
+    normalized = normalized:gsub('/+$', '')
+    normalized = normalized:gsub('/dashboard$', '')
+    return normalized
+end
+
+local DASHBOARD_URL = normalizeDashboardUrl(RAW_DASHBOARD_URL)
+local API_KEY_CONFIGURED = API_KEY ~= '' and API_KEY ~= 'change_this_fivem_secret'
+
+local function apiUrl(path)
+    return DASHBOARD_URL .. path
+end
+
+local function urlEncode(value)
+    return tostring(value or ''):gsub('([^%w%-_%.~])', function(char)
+        return string.format('%%%02X', string.byte(char))
+    end)
+end
+
+local function logHttpFailure(label, status, body, errorData)
+    print(('[Unova Dashboard] %s failed: status=%s url=%s error=%s body=%s'):format(
+        label,
+        tostring(status),
+        DASHBOARD_URL,
+        tostring(errorData or 'none'),
+        tostring(body or '')
+    ))
+end
 
 local function startsWith(value, prefix)
     return string.sub(value, 1, #prefix) == prefix
@@ -69,9 +100,9 @@ end
 local function sendStatus()
     local players = getPlayerList()
 
-    PerformHttpRequest(DASHBOARD_URL .. '/fivem/update', function(status)
+    PerformHttpRequest(apiUrl('/fivem/update'), function(status, body, _, errorData)
         if status ~= 200 then
-            print('[Unova Dashboard] Status update failed: ' .. tostring(status))
+            logHttpFailure('Status update', status, body, errorData)
         end
     end, 'POST', json.encode({
         serverName = GetConvar('sv_projectName', 'Unova'),
@@ -109,8 +140,13 @@ local function findPlayerForAction(action)
 end
 
 local function pollModeration()
-    PerformHttpRequest(DASHBOARD_URL .. '/fivem/moderation/poll', function(status, body)
-        if status ~= 200 or not body then return end
+    PerformHttpRequest(apiUrl('/fivem/moderation/poll'), function(status, body, _, errorData)
+        if status ~= 200 or not body then
+            if status ~= 200 then
+                logHttpFailure('Moderation poll', status, body, errorData)
+            end
+            return
+        end
         local data = json.decode(body)
         if not data or not data.actions then return end
 
@@ -145,6 +181,49 @@ RegisterCommand('founderui', function(src)
     end
 
     TriggerClientEvent('unova:founder:openPanel', src, getPlayerList())
+end, false)
+
+RegisterCommand('unovatest', function(src)
+    local function reply(message, ok)
+        if src == 0 then
+            print('[Unova Dashboard] ' .. message)
+            return
+        end
+        notifyFounder(src, message, ok)
+    end
+
+    if src ~= 0 and not isFounder(src) then
+        TriggerClientEvent('chat:addMessage', src, {
+            args = {'Unova Founder', 'Founder only.'}
+        })
+        return
+    end
+
+    reply(('Testing bridge URL %s | API key configured: %s'):format(DASHBOARD_URL, tostring(API_KEY_CONFIGURED)), true)
+
+    PerformHttpRequest(apiUrl('/health'), function(status, body, _, errorData)
+        if status == 200 then
+            reply('Health check OK: ' .. tostring(body or ''), true)
+        else
+            reply(('Health check failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
+        end
+    end, 'GET', '')
+
+    PerformHttpRequest(apiUrl('/fivem/update'), function(status, body, _, errorData)
+        if status == 200 then
+            reply('FiveM API key test OK. Website should receive city players.', true)
+        else
+            reply(('FiveM API key test failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')), false)
+        end
+    end, 'POST', json.encode({
+        serverName = GetConvar('sv_projectName', 'Unova'),
+        onlinePlayers = #getPlayerList(),
+        maxPlayers = GetConvarInt('sv_maxclients', 64),
+        players = getPlayerList()
+    }), {
+        ['Content-Type'] = 'application/json',
+        ['x-api-key'] = API_KEY
+    })
 end, false)
 
 RegisterNetEvent('unova:founder:refreshPlayers', function()
@@ -186,14 +265,14 @@ RegisterNetEvent('unova:founder:moderate', function(data)
         moderatorDiscordId = getDiscordId(src) or FOUNDER_DISCORD_ID
     }
 
-    PerformHttpRequest(DASHBOARD_URL .. '/fivem/founder/moderation/' .. action, function(status, body)
+    PerformHttpRequest(apiUrl('/fivem/founder/moderation/' .. action), function(status, body, _, errorData)
         if status == 200 then
             notifyFounder(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
             TriggerClientEvent('unova:founder:updatePlayers', src, getPlayerList())
             return
         end
 
-        notifyFounder(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(body or ''), false)
+        notifyFounder(src, 'Moderation request failed: ' .. tostring(status) .. ' ' .. tostring(errorData or body or ''), false)
     end, 'POST', json.encode(payload), {
         ['Content-Type'] = 'application/json',
         ['x-api-key'] = API_KEY
@@ -209,7 +288,7 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
     Wait(0)
     deferrals.update('Checking Unova ban status...')
 
-    PerformHttpRequest(DASHBOARD_URL .. '/fivem/bans/check?license=' .. license, function(status, body)
+    PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license)), function(status, body)
         if status == 200 and body then
             local data = json.decode(body)
             if data and data.banned then
@@ -219,6 +298,15 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
         end
         deferrals.done()
     end, 'GET', '', { ['x-api-key'] = API_KEY })
+end)
+
+CreateThread(function()
+    Wait(1000)
+    print(('[Unova Dashboard] Bridge loaded. URL=%s API key configured=%s founder=%s'):format(
+        DASHBOARD_URL,
+        tostring(API_KEY_CONFIGURED),
+        FOUNDER_DISCORD_ID
+    ))
 end)
 
 CreateThread(function()
