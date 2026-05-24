@@ -295,12 +295,4 @@ or paste a Discord ID/mention in the whitelist channel.
 
 ## 12. Anti-Metagaming VC Rule
 
-If a member has `WHITELISTED_ROLE_ID` and their Discord ID is online in FiveM, the bot disconnects them from server voice channels and DMs:
-
-```txt
-You cannot metagame meaning VC and city.
-This includes private VC calls.
-If you are found to be metagaming, you will receive an official warning.
-```
-
-Discord bots cannot see or disconnect users from private DM calls. This system enforces server voice channels and sends the warning text.
+If a member has `WHITELISTED_ROLE_ID` and their Discord ID is online i
