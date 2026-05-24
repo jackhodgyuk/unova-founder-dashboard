@@ -49,6 +49,49 @@ function setLoginError(message) {
   loginError.textContent = message || '';
 }
 
+function describeFirebaseError(error) {
+  const code = error?.code || 'unknown';
+  const messages = {
+    'auth/unauthorized-domain': 'This dashboard domain is not authorized in Firebase.',
+    'auth/popup-blocked': 'Your browser blocked the Google sign-in popup.',
+    'auth/popup-closed-by-user': 'The Google sign-in window was closed before login finished.',
+    'auth/cancelled-popup-request': 'Another Google sign-in popup was already open.',
+    'auth/operation-not-allowed': 'Google sign-in is not enabled in Firebase Authentication.',
+    'auth/operation-not-supported-in-this-environment': 'Popup sign-in is not supported in this browser.',
+    'auth/web-storage-unsupported': 'This browser is blocking storage needed for Google sign-in.'
+  };
+  return `${messages[code] || 'Google sign-in could not complete.'} (${code})`;
+}
+
+function shouldFallbackToRedirect(error) {
+  return [
+    'auth/popup-blocked',
+    'auth/operation-not-supported-in-this-environment',
+    'auth/web-storage-unsupported'
+  ].includes(error?.code);
+}
+
+async function completeFirebaseLogin(user) {
+  const idToken = await user.getIdToken();
+  const loginResponse = await fetch('/auth/firebase-login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ idToken })
+  });
+
+  if (!loginResponse.ok) {
+    setLoginError('Google account is not allowed for founder access.');
+    return false;
+  }
+
+  const data = await loginResponse.json();
+  authToken = data.token;
+  localStorage.setItem(tokenKey, authToken);
+  loginForm.reset();
+  setAuthState(true);
+  return true;
+}
+
 function api(path, options = {}) {
   return fetch(path, {
     ...options,
@@ -274,7 +317,10 @@ async function setupFirebaseLogin() {
   if (!configured) return;
 
   try {
-    const [{ initializeApp }, { getAuth, GoogleAuthProvider, signInWithPopup }] = await Promise.all([
+    const [
+      { initializeApp },
+      { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult }
+    ] = await Promise.all([
       import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
       import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
     ]);
@@ -282,6 +328,15 @@ async function setupFirebaseLogin() {
     firebaseAuth = getAuth(app);
     firebaseProvider = new GoogleAuthProvider();
     firebaseProvider.setCustomParameters({ prompt: 'select_account' });
+
+    const redirectCredential = await getRedirectResult(firebaseAuth).catch((error) => {
+      setLoginError(describeFirebaseError(error));
+      return null;
+    });
+    if (redirectCredential?.user) {
+      await completeFirebaseLogin(redirectCredential.user);
+    }
+
     firebaseLoginButton.classList.remove('hidden');
     loginDivider.classList.remove('hidden');
 
@@ -291,32 +346,21 @@ async function setupFirebaseLogin() {
       firebaseLoginButton.textContent = 'Checking Google...';
       try {
         const credential = await signInWithPopup(firebaseAuth, firebaseProvider);
-        const idToken = await credential.user.getIdToken();
-        const loginResponse = await fetch('/auth/firebase-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ idToken })
-        });
-
-        if (!loginResponse.ok) {
-          setLoginError('Google account is not allowed for founder access.');
+        await completeFirebaseLogin(credential.user);
+      } catch (error) {
+        if (shouldFallbackToRedirect(error)) {
+          firebaseLoginButton.textContent = 'Opening Google...';
+          await signInWithRedirect(firebaseAuth, firebaseProvider);
           return;
         }
-
-        const data = await loginResponse.json();
-        authToken = data.token;
-        localStorage.setItem(tokenKey, authToken);
-        loginForm.reset();
-        setAuthState(true);
-      } catch {
-        setLoginError('Google sign-in could not complete.');
+        setLoginError(describeFirebaseError(error));
       } finally {
         firebaseLoginButton.disabled = false;
         firebaseLoginButton.textContent = 'Continue with Google';
       }
     });
-  } catch {
-    setLoginError('Firebase login is not configured yet.');
+  } catch (error) {
+    setLoginError(describeFirebaseError(error));
   }
 }
 
