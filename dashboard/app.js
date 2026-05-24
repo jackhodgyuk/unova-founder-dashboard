@@ -29,6 +29,7 @@ const actionsView = document.getElementById('actionsView');
 const priorityView = document.getElementById('priorityView');
 const settingsView = document.getElementById('settingsView');
 const settingsNavButton = document.getElementById('settingsNavButton');
+const founderSettingsPanel = document.getElementById('founderSettingsPanel');
 const priorityRoleForm = document.getElementById('priorityRoleForm');
 const priorityOverrideForm = document.getElementById('priorityOverrideForm');
 const priorityRulesList = document.getElementById('priorityRulesList');
@@ -150,7 +151,7 @@ function renderStatus(data) {
     authLabel.textContent = dashboardUser.role
       ? `${formatRole(dashboardUser.role)} Access`
       : 'Firebase Password Access';
-    settingsNavButton.classList.toggle('hidden', dashboardUser.role !== 'founder');
+    founderSettingsPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
   }
 
   const fivem = data.fivem || {};
@@ -339,4 +340,178 @@ loginForm.addEventListener('submit', async (event) => {
 
   setLoginError('');
   firebaseLoginButton.disabled = true;
-  firebaseLoginButton.textCo
+  firebaseLoginButton.textContent = 'Checking...';
+
+  try {
+    const { signInWithEmailAndPassword } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+    const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+    const ok = await completeFirebaseLogin(credential.user);
+    if (ok) loginForm.reset();
+  } catch (error) {
+    setLoginError(describeFirebaseError(error));
+  } finally {
+    firebaseLoginButton.disabled = false;
+    firebaseLoginButton.textContent = 'Log In';
+  }
+});
+
+document.getElementById('logoutButton').addEventListener('click', () => {
+  localStorage.removeItem(tokenKey);
+  authToken = null;
+  dashboardUser = null;
+  if (firebaseAuth) {
+    firebaseAuth.signOut().catch(() => null);
+  }
+  setAuthState(false);
+});
+
+passwordForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!firebaseAuth?.currentUser) return;
+
+  const formData = new FormData(passwordForm);
+  const currentPassword = String(formData.get('currentPassword') || '');
+  const newPassword = String(formData.get('newPassword') || '');
+  passwordNotice.textContent = '';
+
+  try {
+    const {
+      EmailAuthProvider,
+      reauthenticateWithCredential,
+      updatePassword
+    } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+    const credential = EmailAuthProvider.credential(firebaseAuth.currentUser.email, currentPassword);
+    await reauthenticateWithCredential(firebaseAuth.currentUser, credential);
+    await updatePassword(firebaseAuth.currentUser, newPassword);
+    passwordForm.reset();
+    passwordNotice.textContent = 'Password changed.';
+  } catch (error) {
+    passwordNotice.textContent = describeFirebaseError(error);
+  }
+});
+
+document.getElementById('refreshButton').addEventListener('click', loadStatus);
+
+document.querySelectorAll('.nav button').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.nav button').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    const view = button.dataset.view;
+    playersView.classList.toggle('hidden', view !== 'players');
+    actionsView.classList.toggle('hidden', view !== 'actions');
+    priorityView.classList.toggle('hidden', view !== 'priority');
+    settingsView.classList.toggle('hidden', view !== 'settings');
+    if (view === 'priority') loadPriority();
+  });
+});
+
+priorityRoleForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityRoleForm));
+  const response = await api('/dashboard/priority/rules', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityRoleForm.reset();
+    await loadPriority();
+  }
+});
+
+priorityOverrideForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityOverrideForm));
+  const response = await api('/dashboard/priority/overrides', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityOverrideForm.reset();
+    await loadPriority();
+  }
+});
+
+async function deletePriorityRule(roleId) {
+  await api('/dashboard/priority/rules/delete', {
+    method: 'POST',
+    body: JSON.stringify({ roleId })
+  }).catch(() => null);
+  await loadPriority();
+}
+
+async function deletePriorityOverride(discordId) {
+  await api('/dashboard/priority/overrides/delete', {
+    method: 'POST',
+    body: JSON.stringify({ discordId })
+  }).catch(() => null);
+  await loadPriority();
+}
+
+document.querySelectorAll('[data-action]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    if (!selectedPlayer) return;
+
+    const action = button.dataset.action;
+    const actionReason = reason.value.trim();
+    if (!actionReason) {
+      actionNotice.textContent = 'Reason is required.';
+      return;
+    }
+
+    actionNotice.textContent = `${action} submitted...`;
+    const response = await api(`/dashboard/moderation/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: selectedPlayer.id,
+        playerName: selectedPlayer.name,
+        discordId: selectedPlayer.discordId,
+        license: selectedPlayer.license,
+        reason: actionReason
+      })
+    }).catch(() => null);
+
+    if (!response || !response.ok) {
+      actionNotice.textContent = 'Action failed.';
+      return;
+    }
+
+    const data = await response.json();
+    actionNotice.textContent = data.ticket
+      ? `${action} sent. Ticket #${data.ticket.name} opened.`
+      : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
+    reason.value = '';
+    await loadStatus();
+  });
+});
+
+async function setupFirebaseLogin() {
+  const response = await fetch('/dashboard/firebase-config').catch(() => null);
+  if (!response || !response.ok) return;
+
+  const { configured, config } = await response.json();
+  if (!configured) return;
+
+  try {
+    const [
+      { initializeApp },
+      { getAuth, onAuthStateChanged }
+    ] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
+    ]);
+    const app = initializeApp(config);
+    firebaseAuth = getAuth(app);
+
+    onAuthStateChanged(firebaseAuth, async (user) => {
+      if (!user || authToken) return;
+      await completeFirebaseLogin(user);
+    });
+  } catch (error) {
+    setLoginError(describeFirebaseError(error));
+  }
+}
+
+setupFirebaseLogin();
+setAuthState(Boolean(authToken));

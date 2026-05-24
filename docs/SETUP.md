@@ -100,7 +100,7 @@ MYSQL_DATABASE=unova_dashboard
 
 ## 3. Firebase Dashboard Login
 
-Enable Google sign-in in Firebase Authentication.
+Enable Email/Password sign-in in Firebase Authentication.
 
 Add the Cloud Run domain to Firebase Authentication authorized domains:
 
@@ -108,7 +108,18 @@ Add the Cloud Run domain to Firebase Authentication authorized domains:
 unova-founder-dashboard-git-597032418775.europe-west1.run.app
 ```
 
-Then set a Firebase custom claim on your user, for example:
+Create users in Firebase Authentication. The dashboard does not create users.
+
+Give dashboard access by adding their email to the right Cloud Run variable:
+
+```env
+DASHBOARD_FOUNDER_EMAILS=founder@example.com
+DASHBOARD_OWNER_EMAILS=
+DASHBOARD_CO_OWNER_EMAILS=
+DASHBOARD_ADMIN_EMAILS=
+```
+
+Comma-separate multiple emails. You can also set Firebase custom claims, for example:
 
 ```json
 {
@@ -117,7 +128,7 @@ Then set a Firebase custom claim on your user, for example:
 }
 ```
 
-The dashboard rejects signed-in users with no `unovaRole`.
+The dashboard rejects signed-in users with no dashboard role from either email lists or custom claims.
 
 ## 4. Install Packages
 

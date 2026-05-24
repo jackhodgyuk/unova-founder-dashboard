@@ -914,4 +914,322 @@ async function recordModerationAction(action, body, moderator, source) {
     playerName: body.playerName || null,
     reason,
     moderatorDiscordId: normalizedModerator.discordId,
-    moderatorDiscor
+    moderatorDiscordName,
+    moderatorDisplayName: normalizedModerator.displayName,
+    moderatorRole: normalizedModerator.role,
+    moderatorFirebaseUid: normalizedModerator.firebaseUid,
+    moderatorEmail: normalizedModerator.email,
+    source,
+    createdAt: new Date().toISOString()
+  };
+
+  state.moderationQueue.push(moderationAction);
+  state.recentModerationActions.unshift(moderationAction);
+  state.recentModerationActions = state.recentModerationActions.slice(0, 50);
+
+  await safeQuery(
+    'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      moderationAction.action,
+      moderationAction.discordId,
+      moderationAction.citizenid,
+      moderationAction.license,
+      moderationAction.reason,
+      moderationAction.moderatorDiscordId
+    ]
+  );
+
+  if (moderationAction.action === 'ban') {
+    await safeQuery(
+      'INSERT INTO fivem_bans (license, discord_id, citizenid, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?)',
+      [
+        moderationAction.license || 'unknown',
+        moderationAction.discordId,
+        moderationAction.citizenid,
+        moderationAction.reason,
+        moderationAction.moderatorDiscordId
+      ]
+    );
+  }
+
+  const discordRoleUpdate = await applyDiscordBanRole(moderationAction);
+  const ticket = await createDiscordModerationTicket(moderationAction);
+  return { status: 200, payload: { ok: true, moderationAction, discordRoleUpdate, ticket } };
+}
+
+function getMemoryStatus() {
+  return normalizeStatus(state.latestStatus);
+}
+
+async function getPersistedStatus() {
+  const [rows] = await safeQuery('SELECT * FROM server_status WHERE id = 1');
+  return normalizeStatus(rows[0] || state.latestStatus);
+}
+
+async function handleRequest(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = requestUrl.pathname;
+
+  if (req.method === 'GET' && (pathname === '/health' || pathname === '/healthz')) {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/') {
+    redirect(res, '/dashboard/');
+    return;
+  }
+
+  if (req.method === 'GET' && (pathname === '/dashboard' || pathname === '/dashboard/')) {
+    sendFile(res, path.join(dashboardDir, 'index.html'));
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/firebase-config') {
+    sendJson(res, 200, getFirebasePublicConfig());
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/auth/firebase-login') {
+    const body = await readBody(req);
+    let firebaseUser;
+    try {
+      firebaseUser = await verifyFirebaseIdToken(body.idToken);
+    } catch (error) {
+      console.warn(`[Unova API] Firebase login rejected: ${error.message}`);
+      sendJson(res, 401, { error: 'Invalid Firebase login.' });
+      return;
+    }
+
+    if (!hasDashboardAccess(firebaseUser)) {
+      sendJson(res, 403, {
+        error: 'Firebase dashboard role required.',
+        message: 'Add this email to DASHBOARD_FOUNDER_EMAILS, DASHBOARD_OWNER_EMAILS, DASHBOARD_CO_OWNER_EMAILS, or DASHBOARD_ADMIN_EMAILS in Cloud Run.',
+        email: firebaseUser.email,
+        requiredRoles: ['founder', 'owner', 'co_owner', 'admin']
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      user: publicDashboardUser(firebaseUser)
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/fivem/update') {
+    if (!requireFiveM(req, res)) return;
+
+    const status = await readBody(req);
+    state.latestStatus = {
+      ...status,
+      updatedAt: status.updatedAt || new Date().toISOString()
+    };
+    state.fivemOnlinePlayers = status.players || [];
+    await safeQuery(
+      `INSERT INTO server_status (id, server_name, online_players, max_players, players_json)
+       VALUES (1, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE server_name=VALUES(server_name), online_players=VALUES(online_players), max_players=VALUES(max_players), players_json=VALUES(players_json)`,
+      [status.serverName, status.onlinePlayers, status.maxPlayers, JSON.stringify(status.players || [])]
+    );
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/players') {
+    const fivem = getMemoryStatus();
+    sendJson(res, 200, {
+      fivem,
+      players: fivem.players || []
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/internal/fivem/online-discord-ids') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordIds = state.fivemOnlinePlayers
+      .map((player) => cleanId(player.discordId))
+      .filter(Boolean);
+    sendJson(res, 200, { discordIds });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/access/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      allowed: await memberHasManagementAccess(discordId),
+      discordId
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/priority/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      discordId,
+      priority: await calculatePriority(discordId)
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/status') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const fivem = await getPersistedStatus();
+    sendJson(res, 200, {
+      user: publicDashboardUser(user),
+      fivem,
+      players: fivem.players || [],
+      queueLength: state.moderationQueue.length,
+      recentActions: state.recentModerationActions
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/priority') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    sendJson(res, 200, {
+      rules: getPriorityRules(),
+      overrides: getPriorityOverrides()
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/rules') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const rule = normalizePriorityRule(await readBody(req));
+    if (!rule) {
+      sendJson(res, 400, { error: 'Valid roleId and points are required.' });
+      return;
+    }
+    state.priorityRules = getPriorityRules().filter((item) => item.roleId !== rule.roleId);
+    state.priorityRules.unshift(rule);
+    sendJson(res, 200, { ok: true, rules: getPriorityRules() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/rules/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const body = await readBody(req);
+    const roleId = cleanId(body.roleId);
+    state.priorityRules = getPriorityRules().filter((item) => item.roleId !== roleId);
+    sendJson(res, 200, { ok: true, rules: getPriorityRules() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/overrides') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const override = normalizePriorityOverride(await readBody(req));
+    if (!override) {
+      sendJson(res, 400, { error: 'Valid discordId and points are required.' });
+      return;
+    }
+    state.priorityOverrides = getPriorityOverrides().filter((item) => item.discordId !== override.discordId);
+    state.priorityOverrides.unshift(override);
+    sendJson(res, 200, { ok: true, overrides: getPriorityOverrides() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/overrides/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId);
+    state.priorityOverrides = getPriorityOverrides().filter((item) => item.discordId !== discordId);
+    sendJson(res, 200, { ok: true, overrides: getPriorityOverrides() });
+    return;
+  }
+
+  const dashboardModerationMatch = pathname.match(/^\/dashboard\/moderation\/([^/]+)$/);
+  if (req.method === 'POST' && dashboardModerationMatch) {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const result = await recordModerationAction(
+      dashboardModerationMatch[1],
+      await readBody(req),
+      user,
+      'dashboard'
+    );
+    sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  const fivemModerationMatch = pathname.match(/^\/fivem\/(?:founder|admin)\/moderation\/([^/]+)$/);
+  if (req.method === 'POST' && fivemModerationMatch) {
+    if (!requireFiveM(req, res)) return;
+
+    const body = await readBody(req);
+    if (!await memberHasManagementAccess(body.moderatorDiscordId)) {
+      sendJson(res, 403, { error: 'Management access required.' });
+      return;
+    }
+
+    const result = await recordModerationAction(
+      fivemModerationMatch[1],
+      body,
+      cleanId(body.moderatorDiscordId),
+      'fivem-ui'
+    );
+    sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/moderation/poll') {
+    if (!requireFiveM(req, res)) return;
+
+    const actions = state.moderationQueue.splice(0, 25);
+    sendJson(res, 200, { actions });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/bans/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const license = requestUrl.searchParams.get('license');
+    const [rows] = await safeQuery('SELECT * FROM fivem_bans WHERE license = ? AND active = 1 LIMIT 1', [license]);
+    sendJson(res, 200, { banned: rows.length > 0, ban: rows[0] || null });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname.startsWith('/dashboard/')) {
+    const relativePath = decodeURIComponent(pathname.slice('/dashboard/'.length));
+    sendFile(res, path.join(dashboardDir, relativePath));
+    return;
+  }
+
+  sendJson(res, 404, { error: 'Not found.' });
+}
+
+function startServer(onListening) {
+  const port = Number(process.env.PORT) || 8080;
+  const host = '0.0.0.0';
+  return server.listen(port, host, () => {
+    console.log(`[Unova API] Running on http://${host}:${port}`);
+    if (typeof onListening === 'function') {
+      onListening();
+    }
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { server, startServer };
