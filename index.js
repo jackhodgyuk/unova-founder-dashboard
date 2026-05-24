@@ -1,26 +1,19 @@
-import express from 'express';
-import dotenv from 'dotenv';
-
-dotenv.config();
+import express from "express";
 
 const app = express();
-
 app.use(express.json());
 
-app.get('/', (req, res) => {
-    res.send('FounderBot Dashboard Online');
+app.get("/", (req, res) => {
+  res.status(200).send("FounderBot Dashboard Online");
 });
 
-app.post('/fivem/update', (req, res) => {
-
-    console.log(req.body);
-
-    res.sendStatus(200);
-
+app.post("/fivem/update", (req, res) => {
+  console.log("FiveM update received:", req.body);
+  res.status(200).json({ ok: true });
 });
 
 const PORT = process.env.PORT || 8080;
 
-app.listen(PORT, () => {
-    console.log(`FounderBot running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`FounderBot dashboard listening on port ${PORT}`);
 });
