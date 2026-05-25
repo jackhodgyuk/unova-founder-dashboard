@@ -639,8 +639,9 @@ function pullPlayerModal() {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId('player_user_id')
-          .setLabel('Discord user ID or mention')
+          .setLabel('Discord name, username, ID, or mention')
           .setStyle(TextInputStyle.Short)
+          .setPlaceholder('Example: Jack Hodgy, jackhodgyuk, @Jack, or user ID')
           .setRequired(true)
       ),
       new ActionRowBuilder().addComponents(
@@ -997,6 +998,49 @@ function extractDiscordId(value) {
   return cleanId(String(value || '').match(/\d{15,25}/)?.[0]);
 }
 
+function normalizeMemberSearch(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^@/, '')
+    .toLowerCase();
+}
+
+function memberSearchFields(member) {
+  return [
+    member.displayName,
+    member.nickname,
+    member.user?.globalName,
+    member.user?.username,
+    member.user?.tag
+  ].filter(Boolean);
+}
+
+function memberMatchesSearch(member, query) {
+  const normalizedQuery = normalizeMemberSearch(query);
+  return memberSearchFields(member).some((field) => normalizeMemberSearch(field) === normalizedQuery);
+}
+
+async function resolveGuildMemberInput(guild, value) {
+  const raw = String(value || '').trim();
+  const userId = extractDiscordId(raw);
+  if (userId) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    return member ? { member, ambiguous: false, matches: [member] } : { member: null, ambiguous: false, matches: [] };
+  }
+
+  const query = normalizeMemberSearch(raw);
+  if (query.length < 2) return { member: null, ambiguous: false, matches: [] };
+
+  const fetched = await guild.members.search({ query: raw, limit: 10 }).catch(() => null);
+  const candidates = fetched ? [...fetched.values()] : [];
+  const exact = candidates.filter((member) => memberMatchesSearch(member, raw));
+  const matches = exact.length ? exact : candidates;
+
+  if (matches.length === 1) return { member: matches[0], ambiguous: false, matches };
+  if (matches.length > 1) return { member: null, ambiguous: true, matches };
+  return { member: null, ambiguous: false, matches: [] };
+}
+
 async function applyDiscordBanRole(member, reason) {
   const addedRoleIds = banRoleIds(member.guild);
   const removedRoleIds = banRemoveRoleIds(member.guild);
@@ -1218,12 +1262,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.editReply('Staff and above only.');
     }
 
-    const userId = extractDiscordId(interaction.fields.getTextInputValue('player_user_id'));
+    const playerSearch = interaction.fields.getTextInputValue('player_user_id');
     const reason = interaction.fields.getTextInputValue('pull_reason');
-    if (!userId) return interaction.editReply('Send a valid Discord user ID or mention.');
+    const resolved = await resolveGuildMemberInput(interaction.guild, playerSearch);
+    if (resolved.ambiguous) {
+      const names = resolved.matches
+        .slice(0, 5)
+        .map((member) => `${member.displayName} (${member.user.username})`)
+        .join(', ');
+      return interaction.editReply(`I found more than one match: ${names}. Try their exact username, mention, or Discord ID.`);
+    }
+    if (!resolved.member) return interaction.editReply('Could not find that Discord member. Try their exact username, display name, mention, or Discord ID.');
 
-    const targetUser = await client.users.fetch(userId).catch(() => null);
-    if (!targetUser) return interaction.editReply('Could not find that Discord user.');
+    const targetUser = resolved.member.user;
 
     const channel = await createManagementTicket(interaction.guild, {
       targetUser,
