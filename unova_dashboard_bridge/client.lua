@@ -38,10 +38,6 @@ end)
 RegisterNetEvent('unova:admin:eyesNotice', function(payload)
     local title = payload.title or 'Unova'
     local message = payload.message or ''
-    BeginTextCommandThefeedPost('STRING')
-    AddTextComponentSubstringPlayerName(message)
-    EndTextCommandThefeedPostMessagetext('CHAR_DEFAULT', 'CHAR_DEFAULT', false, 4, title, 'Unova Roleplay')
-    EndTextCommandThefeedPostTicker(false, false)
     SendNUIMessage({
         type = 'toast',
         title = title,
@@ -50,6 +46,11 @@ RegisterNetEvent('unova:admin:eyesNotice', function(payload)
 end)
 
 RegisterNetEvent('unova:admin:reviveFallback', function()
+    local revived = pcall(function()
+        exports['plt_ambulance_job']:RevivePlayer()
+    end)
+    if revived then return end
+
     local ped = PlayerPedId()
     local coords = GetEntityCoords(ped)
     NetworkResurrectLocalPlayer(coords.x, coords.y, coords.z, GetEntityHeading(ped), true, false)
@@ -57,6 +58,21 @@ RegisterNetEvent('unova:admin:reviveFallback', function()
     ClearPedTasksImmediately(ped)
     SetEntityHealth(ped, GetEntityMaxHealth(ped))
 end)
+
+RegisterNetEvent('unova:admin:makeDeadFallback', function()
+    local knocked = pcall(function()
+        exports['plt_ambulance_job']:manuallyKnockout(true)
+    end)
+    if knocked then return end
+
+    SetEntityHealth(PlayerPedId(), 0)
+end)
+
+RegisterCommand('unova_admin_keybind', function()
+    TriggerServerEvent('unova:admin:requestOpenPanel')
+end, false)
+
+RegisterKeyMapping('unova_admin_keybind', 'Open Unova Admin Panel', 'keyboard', 'F2')
 
 RegisterNUICallback('close', function(_, cb)
     panelOpen = false

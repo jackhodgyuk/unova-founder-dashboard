@@ -551,7 +551,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
 
     const action = button.dataset.action;
     const actionReason = reason.value.trim();
-    if (!actionReason && action !== 'revive') {
+    if (!actionReason && action !== 'revive' && action !== 'down') {
       actionNotice.textContent = 'Reason is required.';
       return;
     }
@@ -564,7 +564,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
         playerName: selectedPlayer.name,
         discordId: selectedPlayer.discordId,
         license: selectedPlayer.license,
-        reason: actionReason || 'Revive requested'
+        reason: actionReason || (action === 'revive' ? 'Revive requested' : 'Marked dead by management')
       })
     }).catch(() => null);
 
@@ -576,6 +576,8 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     const data = await response.json();
     actionNotice.textContent = action === 'revive'
       ? 'revive sent to the city.'
+      : action === 'down'
+      ? 'make dead sent to the city.'
       : data.ticket
       ? `${action} sent. Ticket #${data.ticket.name} opened.`
       : `${action} sent. Check bot permissions if no Discord ticket appeared.`;

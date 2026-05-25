@@ -596,7 +596,7 @@ function getStaffRoleIds() {
 }
 
 function cleanAction(value) {
-  return ['warn', 'kick', 'ban', 'revive'].includes(value) ? value : null;
+  return ['warn', 'kick', 'ban', 'revive', 'down'].includes(value) ? value : null;
 }
 
 function normalizeStatus(rowOrStatus) {
@@ -1198,7 +1198,12 @@ async function recordModerationAction(action, body, moderator, source) {
     return { status: 400, payload: { error: 'Invalid action.' } };
   }
 
-  const reason = String(body.reason || (cleanModerationAction === 'revive' ? 'Revive requested' : '')).trim();
+  const defaultReason = cleanModerationAction === 'revive'
+    ? 'Revive requested'
+    : cleanModerationAction === 'down'
+    ? 'Marked dead by management'
+    : '';
+  const reason = String(body.reason || defaultReason).trim();
   if (!reason) {
     return { status: 400, payload: { error: 'Reason is required.' } };
   }
@@ -1228,7 +1233,7 @@ async function recordModerationAction(action, body, moderator, source) {
     createdAt: new Date().toISOString()
   };
 
-  if (moderationAction.action !== 'revive') {
+  if (moderationAction.action !== 'revive' && moderationAction.action !== 'down') {
     await safeQuery(
       'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
       [
@@ -1255,8 +1260,9 @@ async function recordModerationAction(action, body, moderator, source) {
     );
   }
 
-  const discordRoleUpdate = moderationAction.action === 'revive' ? { skipped: 'revive' } : await applyDiscordBanRole(moderationAction);
-  const ticket = moderationAction.action === 'revive' ? null : await createDiscordModerationTicket(moderationAction);
+  const cityOnlyAction = moderationAction.action === 'revive' || moderationAction.action === 'down';
+  const discordRoleUpdate = cityOnlyAction ? { skipped: moderationAction.action } : await applyDiscordBanRole(moderationAction);
+  const ticket = cityOnlyAction ? null : await createDiscordModerationTicket(moderationAction);
   moderationAction.ticket = ticket;
   state.moderationQueue.push(moderationAction);
   state.recentModerationActions.unshift(moderationAction);

@@ -558,7 +558,7 @@ button {
 
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 13px 0;
 }
@@ -582,6 +582,10 @@ button {
 
 .revive {
   background: linear-gradient(135deg, #69d6a3, #2e8f6f);
+}
+
+.down {
+  background: linear-gradient(135deg, #8590a3, #465063);
 }
 
 .actions-view {
@@ -652,6 +656,11 @@ button {
 .badge.revive {
   background: rgba(105, 214, 163, 0.24);
   color: #9af2c9;
+}
+
+.badge.down {
+  background: rgba(133, 144, 163, 0.24);
+  color: #cbd5e1;
 }
 
 .priority-grid {

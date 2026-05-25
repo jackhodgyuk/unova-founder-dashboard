@@ -284,7 +284,7 @@ textarea:focus {
 
 .moderation-actions {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-top: 14px;
 }
@@ -307,6 +307,10 @@ textarea:focus {
 
 .revive {
   background: #20795f;
+}
+
+.down {
+  background: #4b5563;
 }
 
 .report-submit {
