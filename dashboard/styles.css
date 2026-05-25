@@ -580,6 +580,10 @@ button {
   background: linear-gradient(135deg, #e05268, #9b233a);
 }
 
+.revive {
+  background: linear-gradient(135deg, #69d6a3, #2e8f6f);
+}
+
 .actions-view {
   padding: 22px 24px;
 }
@@ -643,6 +647,11 @@ button {
 .badge.ban {
   background: rgba(221, 76, 102, 0.24);
   color: #ffa1af;
+}
+
+.badge.revive {
+  background: rgba(105, 214, 163, 0.24);
+  color: #9af2c9;
 }
 
 .priority-grid {

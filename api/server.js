@@ -495,8 +495,9 @@ async function verifyFirebaseIdToken(idToken) {
   if (!valid) throw new Error('Firebase token signature mismatch.');
 
   const claims = extractCustomClaims(payload);
-  const roles = getDashboardRolesFromClaims(claims);
+  const roles = new Set(getDashboardRolesFromClaims(claims));
   if (isLockedFounderEmail(payload.email)) roles.add('founder');
+  const roleList = [...roles].sort((a, b) => dashboardRoleRank[b] - dashboardRoleRank[a]);
   return {
     uid: payload.user_id || payload.sub,
     email: payload.email || null,
@@ -505,8 +506,8 @@ async function verifyFirebaseIdToken(idToken) {
     picture: payload.picture || null,
     discordId: getClaimDiscordId(claims),
     claims,
-    roles,
-    role: getPrimaryDashboardRole(roles)
+    roles: roleList,
+    role: getPrimaryDashboardRole(roleList)
   };
 }
 
@@ -587,8 +588,15 @@ function getTicketAccessRoleIds() {
   );
 }
 
+function getStaffRoleIds() {
+  return cleanIdList(
+    process.env.STAFF_ROLE_ID,
+    process.env.STAFF_ROLE_IDS
+  );
+}
+
 function cleanAction(value) {
-  return ['warn', 'kick', 'ban'].includes(value) ? value : null;
+  return ['warn', 'kick', 'ban', 'revive'].includes(value) ? value : null;
 }
 
 function normalizeStatus(rowOrStatus) {
@@ -648,7 +656,7 @@ function getTicketCategoryName() {
   return process.env.DISCORD_TICKET_CATEGORY_NAME || process.env.TICKET_CATEGORY_NAME || 'tickets';
 }
 
-function buildTicketOverwrites(extraUserIds = []) {
+function buildTicketOverwrites(extraUserIds = [], allowedRoleIds = getTicketAccessRoleIds()) {
   const guildId = cleanId(process.env.DISCORD_GUILD_ID);
   const botRoleId = cleanId(process.env.DISCORD_BOT_ROLE_ID);
   const botUserId = cleanId(process.env.DISCORD_BOT_USER_ID);
@@ -665,7 +673,7 @@ function buildTicketOverwrites(extraUserIds = []) {
   }
 
   addOverwrite(guildId, 0, null, ticketDenyView);
-  for (const roleId of getTicketAccessRoleIds()) {
+  for (const roleId of allowedRoleIds) {
     addOverwrite(roleId, 0, ticketAllow, null);
   }
   addOverwrite(botRoleId, 0, ticketAllow, null);
@@ -676,6 +684,12 @@ function buildTicketOverwrites(extraUserIds = []) {
   }
 
   return overwrites;
+}
+
+function makeRoleMentionLine(roleIds, fallback) {
+  const ids = cleanIdList(roleIds.join(','));
+  if (ids.length) return ids.map((roleId) => `<@&${roleId}>`).join(' ');
+  return fallback;
 }
 
 async function discordRequest(method, token, route, body) {
@@ -1098,12 +1112,13 @@ async function createDiscordPlayerReportTicket(report) {
 
   const reporterDiscordId = cleanId(report.reporterDiscordId);
   const offenderDiscordId = cleanId(report.offenderDiscordId);
+  const staffRoleIds = getStaffRoleIds();
   const channelName = sanitizeChannelName(`report-${report.offenderPlayerId || 'unknown'}-${Date.now().toString().slice(-5)}`);
   const body = {
     name: channelName,
     type: 0,
-    topic: `unova-support-ticket | kind=player_report | level=leadership | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
-    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean))
+    topic: `unova-support-ticket | kind=player_report | level=staff | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
+    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean), staffRoleIds)
   };
 
   const categoryId = await resolveTicketCategoryId(token, guildId).catch(() => null);
@@ -1111,10 +1126,10 @@ async function createDiscordPlayerReportTicket(report) {
 
   try {
     const channel = await postDiscord(token, `/guilds/${guildId}/channels`, body);
-    const managementLine = makeManagementMentionLine();
+    const staffLine = makeRoleMentionLine(staffRoleIds, makeManagementMentionLine());
     await postDiscord(token, `/channels/${channel.id}/messages`, {
       content: [
-        managementLine,
+        staffLine,
         '**New player report from city**',
         `Reporter: ${report.reporterName || 'unknown'}${reporterDiscordId ? ` (<@${reporterDiscordId}>)` : ''}`,
         `Possible offender: ${report.offenderName || 'unknown'} | City ID: ${report.offenderPlayerId || 'unknown'}${offenderDiscordId ? ` | <@${offenderDiscordId}>` : ''}`,
@@ -1136,7 +1151,7 @@ async function createDiscordPlayerReportTicket(report) {
       guildId,
       channelName: channel.name,
       kind: 'player_report',
-      level: 'leadership',
+      level: 'staff',
       openerId: reporterDiscordId,
       openerName: report.reporterName,
       targetId: offenderDiscordId,
@@ -1182,7 +1197,7 @@ async function recordModerationAction(action, body, moderator, source) {
     return { status: 400, payload: { error: 'Invalid action.' } };
   }
 
-  const reason = String(body.reason || '').trim();
+  const reason = String(body.reason || (cleanModerationAction === 'revive' ? 'Revive requested' : '')).trim();
   if (!reason) {
     return { status: 400, payload: { error: 'Reason is required.' } };
   }
@@ -1212,17 +1227,19 @@ async function recordModerationAction(action, body, moderator, source) {
     createdAt: new Date().toISOString()
   };
 
-  await safeQuery(
-    'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
-    [
-      moderationAction.action,
-      moderationAction.discordId,
-      moderationAction.citizenid,
-      moderationAction.license,
-      moderationAction.reason,
-      moderationAction.moderatorDiscordId
-    ]
-  );
+  if (moderationAction.action !== 'revive') {
+    await safeQuery(
+      'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        moderationAction.action,
+        moderationAction.discordId,
+        moderationAction.citizenid,
+        moderationAction.license,
+        moderationAction.reason,
+        moderationAction.moderatorDiscordId
+      ]
+    );
+  }
 
   if (moderationAction.action === 'ban') {
     await safeQuery(
@@ -1237,8 +1254,8 @@ async function recordModerationAction(action, body, moderator, source) {
     );
   }
 
-  const discordRoleUpdate = await applyDiscordBanRole(moderationAction);
-  const ticket = await createDiscordModerationTicket(moderationAction);
+  const discordRoleUpdate = moderationAction.action === 'revive' ? { skipped: 'revive' } : await applyDiscordBanRole(moderationAction);
+  const ticket = moderationAction.action === 'revive' ? null : await createDiscordModerationTicket(moderationAction);
   moderationAction.ticket = ticket;
   state.moderationQueue.push(moderationAction);
   state.recentModerationActions.unshift(moderationAction);

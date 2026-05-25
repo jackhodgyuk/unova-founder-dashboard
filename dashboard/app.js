@@ -118,7 +118,7 @@ async function completeFirebaseLogin(user) {
 
   if (!loginResponse.ok) {
     const error = await loginResponse.json().catch(() => ({}));
-    setLoginError(error.message || 'This Firebase user needs a dashboard role in Cloud Run.');
+    setLoginError(error.message || 'This Firebase user needs a dashboard role in Firebase.');
     return false;
   }
 

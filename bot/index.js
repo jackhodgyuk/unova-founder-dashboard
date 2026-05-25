@@ -603,6 +603,28 @@ function playerReportModal() {
     );
 }
 
+function pullPlayerModal() {
+  return new ModalBuilder()
+    .setCustomId('pull_player_modal')
+    .setTitle('Pull A Player')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('player_user_id')
+          .setLabel('Discord user ID or mention')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('pull_reason')
+          .setLabel('Reason')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+      )
+    );
+}
+
 async function createPlayerTicket(guild, opener, kind) {
   const openerMember = await guild.members.fetch(opener.id).catch(() => null);
   const openerRank = leadershipRank(openerMember, opener.id);
@@ -1018,6 +1040,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.showModal(playerReportModal());
     }
 
+    if (interaction.customId === 'pull_player_ticket') {
+      if (!memberHasAnyRole(interaction.member, roleGroupIds(interaction.guild, 'staff'))) {
+        return interaction.reply({ content: 'Staff only.', flags: MessageFlags.Ephemeral });
+      }
+      return interaction.showModal(pullPlayerModal());
+    }
+
     if (interaction.customId === 'ticket_escalate' || interaction.customId === 'ticket_bug_escalate') {
       return handleTicketEscalation(interaction);
     }
@@ -1084,6 +1113,30 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return interaction.editReply(`Player report opened: ${channel}`);
   }
 
+  if (interaction.isModalSubmit() && interaction.customId === 'pull_player_modal') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!memberHasAnyRole(interaction.member, roleGroupIds(interaction.guild, 'staff'))) {
+      return interaction.editReply('Staff only.');
+    }
+
+    const userId = extractDiscordId(interaction.fields.getTextInputValue('player_user_id'));
+    const reason = interaction.fields.getTextInputValue('pull_reason');
+    if (!userId) return interaction.editReply('Send a valid Discord user ID or mention.');
+
+    const targetUser = await client.users.fetch(userId).catch(() => null);
+    if (!targetUser) return interaction.editReply('Could not find that Discord user.');
+
+    const channel = await createManagementTicket(interaction.guild, {
+      targetUser,
+      reason,
+      label: 'pull',
+      source: 'staff-panel',
+      openerId: interaction.user.id,
+      openerName: interaction.user.tag
+    });
+    return interaction.editReply(`Player pulled into ticket: ${channel}`);
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   if (interaction.commandName !== 'panel' && !isManagementMember(interaction.member, interaction.user.id)) {
@@ -1141,6 +1194,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setCustomId('open_player_report')
           .setLabel('Player Report')
           .setStyle(ButtonStyle.Success)
+        ,
+        new ButtonBuilder()
+          .setCustomId('pull_player_ticket')
+          .setLabel('Pull A Player (Staff Only)')
+          .setStyle(ButtonStyle.Danger)
       );
       await interaction.channel.send({
         content: [
@@ -1225,10 +1283,11 @@ client.on(Events.MessageCreate, async (message) => {
   const blockedMentions = blockedProtectedMentions(message);
   if (blockedMentions.length) {
     await message.delete().catch(() => null);
+    await message.member.timeout(30000, 'Tagged protected staff above their level.').catch(() => null);
     await message.channel.send({
-      content: `${message.author}, you cannot tag protected staff roles or users above your level.`,
+      content: `${message.author}, you cannot tag protected staff roles or users above your level. You have been timed out for 30 seconds.`,
       allowedMentions: { users: [message.author.id], roles: [] }
-    }).then((warning) => setTimeout(() => warning.delete().catch(() => null), 7000)).catch(() => null);
+    }).catch(() => null);
     await logToStaff(`Protected mention blocked from <@${message.author.id}> in <#${message.channel.id}>: ${blockedMentions.join(', ')}`);
     return;
   }
