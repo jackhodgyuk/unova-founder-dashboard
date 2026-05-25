@@ -13,6 +13,7 @@ const {
   PermissionFlagsBits,
   PermissionsBitField,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle
 } = require('discord.js');
@@ -31,6 +32,12 @@ const configuredBotRoleId = process.env.DISCORD_BOT_ROLE_ID;
 const configuredBotUserId = process.env.DISCORD_BOT_USER_ID;
 const dashboardUrl = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.PORT || 8080}`;
 const whitelistedRoleId = process.env.WHITELISTED_ROLE_ID;
+const businessOwnerRoleId = process.env.BUSINESS_OWNER_ROLE_ID || '1483451364703998005';
+const pdRoleId = process.env.PD_ROLE_ID || '1475496342296989696';
+const uhsRoleId = process.env.UHS_ROLE_ID;
+const bronzePrioRoleId = process.env.BRONZE_PRIO_ROLE_ID || '1475501664080494593';
+const silverPrioRoleId = process.env.SILVER_PRIO_ROLE_ID || '1481664036838965339';
+const goldPrioRoleId = process.env.GOLD_PRIO_ROLE_ID || '1481664094661644308';
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
@@ -231,6 +238,24 @@ function isPrivilegedOverrideMember(member, userId) {
   return isFounderMember(member, userId) || memberHasAnyRole(member, privilegedOverrideRoleIds(member?.guild));
 }
 
+function memberHasStaffChainAccess(member, userId) {
+  if (!member) return false;
+  return ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
+    .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
+}
+
+function memberHasRoleGrantAccess(member, userId) {
+  if (!member) return false;
+  return ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
+    .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
+}
+
+function memberHasSeniorRoleGrantAccess(member, userId) {
+  if (!member) return false;
+  return ['server_manager', 'co_owner', 'owner', 'founder']
+    .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
+}
+
 function leadershipRank(member, userId) {
   if (isFounderMember(member, userId)) return 'founder';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'owner'))) return 'owner';
@@ -289,6 +314,9 @@ function memberMentionRank(member) {
 function canMentionProtected(authorKey, targetKey) {
   if (!targetKey) return true;
   if (!authorKey) return false;
+  if (targetKey === 'founder') {
+    return ['developer', 'head_developer', 'server_manager', 'co_owner', 'owner', 'founder'].includes(authorKey);
+  }
   if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
   return mentionRank(authorKey) >= mentionRank(targetKey);
 }
@@ -625,6 +653,59 @@ function pullPlayerModal() {
     );
 }
 
+function roleGrantDefinitions() {
+  return [
+    { key: 'business_owner', label: 'Business Owner', roleId: businessOwnerRoleId, seniorOnly: false },
+    { key: 'pd', label: 'PD', roleId: pdRoleId, seniorOnly: false },
+    { key: 'uhs', label: 'UHS', roleId: uhsRoleId, seniorOnly: false },
+    { key: 'whitelisted', label: 'Whitelisted', roleId: whitelistedRoleId, seniorOnly: true },
+    { key: 'bronze_prio', label: 'Bronze Prio', roleId: bronzePrioRoleId, seniorOnly: true },
+    { key: 'silver_prio', label: 'Silver Prio', roleId: silverPrioRoleId, seniorOnly: true },
+    { key: 'gold_prio', label: 'Gold Prio', roleId: goldPrioRoleId, seniorOnly: true }
+  ].filter((item) => cleanId(item.roleId));
+}
+
+function allowedRoleGrantDefinitions(member, userId) {
+  const senior = memberHasSeniorRoleGrantAccess(member, userId);
+  return roleGrantDefinitions().filter((item) => senior || !item.seniorOnly);
+}
+
+function roleGrantByKey(key) {
+  return roleGrantDefinitions().find((item) => item.key === key) || null;
+}
+
+function roleGrantPanel(member, userId) {
+  const options = allowedRoleGrantDefinitions(member, userId).map((item) => ({
+    label: item.label,
+    value: item.key,
+    description: `Give ${item.label} to a Discord user`
+  }));
+
+  if (!options.length) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('role_grant_select')
+      .setPlaceholder('Choose a role to give')
+      .addOptions(options)
+  );
+}
+
+function roleGrantModal(roleKey, label) {
+  return new ModalBuilder()
+    .setCustomId(`grant_role_modal:${roleKey}`)
+    .setTitle(`Give ${label}`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('target_user')
+          .setLabel('Discord user ID or mention')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      )
+    );
+}
+
 async function createPlayerTicket(guild, opener, kind) {
   const openerMember = await guild.members.fetch(opener.id).catch(() => null);
   const openerRank = leadershipRank(openerMember, opener.id);
@@ -866,15 +947,18 @@ async function registerSlashCommands(readyClient) {
       ),
     new SlashCommandBuilder()
       .setName('whitelist')
-      .setDescription('Give the whitelisted role to a Discord user ID.')
+      .setDescription('Open the role management dropdown panel.')
       .addStringOption((option) =>
-        option.setName('user_id').setDescription('Discord user ID or mention.').setRequired(true)
+        option.setName('user_id').setDescription('Optional Discord user ID or mention for legacy whitelist grant.').setRequired(false)
       ),
     new SlashCommandBuilder()
       .setName('panel')
       .setDescription('Founder-only ticket panel controls.')
       .addSubcommand((subcommand) =>
         subcommand.setName('tickets').setDescription('Post the public support and bug report ticket panel.')
+      )
+      .addSubcommand((subcommand) =>
+        subcommand.setName('whitelist').setDescription('Post the whitelist and role management dropdown panel.')
       )
       .addSubcommand((subcommand) =>
         subcommand.setName('settings').setDescription('Show the current ticket role settings.')
@@ -1041,8 +1125,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.customId === 'pull_player_ticket') {
-      if (!memberHasAnyRole(interaction.member, roleGroupIds(interaction.guild, 'staff'))) {
-        return interaction.reply({ content: 'Staff only.', flags: MessageFlags.Ephemeral });
+      if (!memberHasStaffChainAccess(interaction.member, interaction.user.id)) {
+        return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
       }
       return interaction.showModal(pullPlayerModal());
     }
@@ -1075,6 +1159,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     return;
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === 'role_grant_select') {
+    if (!memberHasRoleGrantAccess(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
+    }
+
+    const roleKey = interaction.values[0];
+    const role = roleGrantByKey(roleKey);
+    if (!role) return interaction.reply({ content: 'That role is not configured.', flags: MessageFlags.Ephemeral });
+    if (role.seniorOnly && !memberHasSeniorRoleGrantAccess(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Only server manager, co-owner, owner, or founder can give that role.', flags: MessageFlags.Ephemeral });
+    }
+
+    return interaction.showModal(roleGrantModal(role.key, role.label));
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'player_report_modal') {
@@ -1115,8 +1214,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.isModalSubmit() && interaction.customId === 'pull_player_modal') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!memberHasAnyRole(interaction.member, roleGroupIds(interaction.guild, 'staff'))) {
-      return interaction.editReply('Staff only.');
+    if (!memberHasStaffChainAccess(interaction.member, interaction.user.id)) {
+      return interaction.editReply('Staff and above only.');
     }
 
     const userId = extractDiscordId(interaction.fields.getTextInputValue('player_user_id'));
@@ -1135,6 +1234,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
       openerName: interaction.user.tag
     });
     return interaction.editReply(`Player pulled into ticket: ${channel}`);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('grant_role_modal:')) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!memberHasRoleGrantAccess(interaction.member, interaction.user.id)) {
+      return interaction.editReply('Staff and above only.');
+    }
+
+    const roleKey = interaction.customId.split(':')[1];
+    const role = roleGrantByKey(roleKey);
+    if (!role) return interaction.editReply('That role is not configured.');
+    if (role.seniorOnly && !memberHasSeniorRoleGrantAccess(interaction.member, interaction.user.id)) {
+      return interaction.editReply('Only server manager, co-owner, owner, or founder can give that role.');
+    }
+
+    const userId = extractDiscordId(interaction.fields.getTextInputValue('target_user'));
+    if (!userId) return interaction.editReply('Send a valid Discord user ID or mention.');
+
+    try {
+      const member = await interaction.guild.members.fetch(userId);
+      await member.roles.add(role.roleId, `${role.label} granted by ${interaction.user.tag}`);
+      await logToStaff(`Role granted: <@${userId}> received <@&${role.roleId}> from <@${interaction.user.id}>.`);
+      return interaction.editReply(`Gave ${role.label} to ${member.user.tag}.`);
+    } catch (error) {
+      return interaction.editReply(`Role grant failed: ${error.message}`);
+    }
   }
 
   if (!interaction.isChatInputCommand()) return;
@@ -1197,7 +1322,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         ,
         new ButtonBuilder()
           .setCustomId('pull_player_ticket')
-          .setLabel('Pull A Player (Staff Only)')
+          .setLabel('Pull A Player')
           .setStyle(ButtonStyle.Danger)
       );
       await interaction.channel.send({
@@ -1213,6 +1338,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
         components: [row]
       });
       return interaction.reply({ content: 'Ticket panel posted.', flags: MessageFlags.Ephemeral });
+    }
+
+    if (subcommand === 'whitelist') {
+      const row = roleGrantPanel(interaction.member, interaction.user.id);
+      if (!row) {
+        return interaction.reply({ content: 'No role grant options are configured for your rank.', flags: MessageFlags.Ephemeral });
+      }
+
+      await interaction.channel.send({
+        content: [
+          '**Unova Role Management**',
+          'Choose a role from the dropdown, then enter the Discord user ID or mention.'
+        ].join('\n'),
+        components: [row]
+      });
+      return interaction.reply({ content: 'Role management panel posted.', flags: MessageFlags.Ephemeral });
     }
 
     if (subcommand === 'settings') {
@@ -1234,18 +1375,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (interaction.commandName === 'whitelist') {
-    const userId = extractDiscordId(interaction.options.getString('user_id', true));
-    if (!userId) {
-      return interaction.reply({ content: 'Send a valid Discord user ID or mention.', flags: MessageFlags.Ephemeral });
+    if (!memberHasRoleGrantAccess(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
     }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    try {
-      const member = await grantWhitelistedRole(interaction.guild, userId, `Whitelisted by ${interaction.user.tag}`);
-      return interaction.editReply(`Whitelisted ${member.user.tag}.`);
-    } catch (error) {
-      return interaction.editReply(`Whitelist failed: ${error.message}`);
+    const userId = extractDiscordId(interaction.options.getString('user_id', false));
+    if (userId) {
+      if (!memberHasSeniorRoleGrantAccess(interaction.member, interaction.user.id)) {
+        return interaction.reply({ content: 'Only server manager, co-owner, owner, or founder can give whitelisted.', flags: MessageFlags.Ephemeral });
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        const member = await grantWhitelistedRole(interaction.guild, userId, `Whitelisted by ${interaction.user.tag}`);
+        return interaction.editReply(`Whitelisted ${member.user.tag}.`);
+      } catch (error) {
+        return interaction.editReply(`Whitelist failed: ${error.message}`);
+      }
     }
+
+    const row = roleGrantPanel(interaction.member, interaction.user.id);
+    if (!row) return interaction.reply({ content: 'No role grant options are configured for your rank.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({
+      content: 'Choose a role, then enter the Discord user ID or mention.',
+      components: [row],
+      flags: MessageFlags.Ephemeral
+    });
   }
 
   if (interaction.commandName === 'add') {
@@ -1293,14 +1447,27 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (isWhitelistChannel(message.channel)) {
-    if (!isManagementMember(message.member, message.author.id)) {
-      await message.reply('Management only.').catch(() => null);
+    if (!memberHasRoleGrantAccess(message.member, message.author.id)) {
+      await message.reply('Staff and above only.').catch(() => null);
       return;
     }
 
     const userId = extractDiscordId(message.content);
     if (!userId) {
-      await message.reply('Send a Discord user ID or mention to give the whitelisted role.').catch(() => null);
+      const row = roleGrantPanel(message.member, message.author.id);
+      if (row) {
+        await message.reply({
+          content: 'Use the dropdown to choose which role to give.',
+          components: [row]
+        }).catch(() => null);
+      } else {
+        await message.reply('No role grant options are configured for your rank.').catch(() => null);
+      }
+      return;
+    }
+
+    if (!memberHasSeniorRoleGrantAccess(message.member, message.author.id)) {
+      await message.reply('Only server manager, co-owner, owner, or founder can give whitelisted. Use the dropdown for PD, UHS, or Business Owner.').catch(() => null);
       return;
     }
 

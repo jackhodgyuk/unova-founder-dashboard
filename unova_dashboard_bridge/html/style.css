@@ -28,6 +28,61 @@ button {
   display: none;
 }
 
+.toast-stack {
+  position: absolute;
+  top: 34px;
+  right: 34px;
+  z-index: 20;
+  display: grid;
+  width: min(360px, 34vw);
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast {
+  border: 1px solid rgba(41, 212, 232, 0.35);
+  border-left: 5px solid #29d4e8;
+  border-radius: 8px;
+  background: rgba(12, 19, 31, 0.94);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.34);
+  padding: 14px;
+  animation: slideIn 220ms ease-out;
+}
+
+.toast.error {
+  border-left-color: #ff8c96;
+}
+
+.toast strong,
+.toast span {
+  display: block;
+}
+
+.toast strong {
+  color: #29d4e8;
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.toast span {
+  margin-top: 5px;
+  color: #f4f7fb;
+  line-height: 1.35;
+}
+
+.toast.closing {
+  opacity: 0;
+  transform: translateX(18px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+}
+
 .panel {
   position: absolute;
   top: 7vh;

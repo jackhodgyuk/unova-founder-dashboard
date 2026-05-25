@@ -10,6 +10,7 @@ const playerMeta = document.getElementById('playerMeta');
 const reason = document.getElementById('reason');
 const notice = document.getElementById('notice');
 const reportNotice = document.getElementById('reportNotice');
+const toastStack = document.getElementById('toastStack');
 
 let players = [];
 let tickets = [];
@@ -35,6 +36,18 @@ function setNotice(message, ok) {
 function setReportNotice(message, ok) {
   reportNotice.textContent = message || '';
   reportNotice.className = ok ? 'notice ok' : 'notice error';
+}
+
+function showToast(title, message, ok = true) {
+  if (!toastStack) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${ok ? 'ok' : 'error'}`;
+  toast.innerHTML = `<strong>${title || 'Unova'}</strong><span>${message || ''}</span>`;
+  toastStack.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('closing');
+    setTimeout(() => toast.remove(), 450);
+  }, 8500);
 }
 
 function renderPlayers() {
@@ -138,6 +151,7 @@ window.addEventListener('message', (event) => {
   }
 
   if (data.type === 'toast') {
+    showToast(data.title || 'Unova', data.message || '', true);
     setReportNotice(`${data.title || 'Unova'}: ${data.message || ''}`, true);
   }
 
