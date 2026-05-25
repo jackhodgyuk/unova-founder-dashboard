@@ -10,12 +10,14 @@
     "dev": "concurrently \"npm run api\" \"npm run bot\""
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "axios": "latest",
     "bcryptjs": "latest",
     "cors": "latest",
     "discord.js": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "firebase-admin": "^13.10.0",
     "jsonwebtoken": "latest",
     "mysql2": "latest",
     "socket.io": "latest"

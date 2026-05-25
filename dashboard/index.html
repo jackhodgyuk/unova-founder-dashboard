@@ -10,7 +10,7 @@
     <main class="shell locked">
       <aside class="sidebar">
         <div class="brand-panel">
-          <span class="mark"><span>UN</span></span>
+          <span class="mark"><img src="https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG" alt="Unova"></span>
           <div>
             <p>Unova Network</p>
             <h1>Management Core</h1>
@@ -25,6 +25,10 @@
           <button type="button" data-view="actions">
             <span class="nav-icon">A</span>
             <span>Actions</span>
+          </button>
+          <button id="ticketsNavButton" type="button" data-view="tickets">
+            <span class="nav-icon">T</span>
+            <span>Tickets</span>
           </button>
           <button type="button" data-view="priority">
             <span class="nav-icon">Q</span>
@@ -56,10 +60,10 @@
       <section class="content">
         <section id="loginView" class="login-view">
           <form id="loginForm" class="login-panel">
-            <span class="login-mark">UN</span>
+            <span class="login-mark"><img src="https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG" alt="Unova"></span>
             <p>Firebase Password Access</p>
             <h2>Secure Dashboard</h2>
-            <label for="loginEmail">Email or Username</label>
+            <label for="loginEmail">Username</label>
             <input id="loginEmail" name="email" type="text" autocomplete="username" required>
             <label for="loginPassword">Password</label>
             <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
@@ -134,4 +138,99 @@
 
           <section id="actionsView" class="actions-view hidden">
             <div class="section-heading">
-     
+              <h3>Recent Actions</h3>
+              <span id="actionsQueueCount">Queue 0</span>
+            </div>
+            <div id="actionsList" class="actions-list"></div>
+          </section>
+
+          <section id="ticketsView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Ongoing Tickets</h3>
+              <span>Owners, co-owners, founders</span>
+            </div>
+            <div id="ticketsList" class="actions-list"></div>
+          </section>
+
+          <section id="priorityView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Priority Queue</h3>
+              <span>Discord role linked</span>
+            </div>
+            <div class="priority-grid">
+              <form id="priorityRoleForm" class="config-panel">
+                <h4>Priority Role</h4>
+                <label for="priorityRoleId">Discord Role ID</label>
+                <input id="priorityRoleId" name="roleId" type="text" inputmode="numeric" placeholder="Role ID">
+                <label for="priorityLabel">Label</label>
+                <input id="priorityLabel" name="label" type="text" placeholder="Queue label">
+                <label for="priorityPoints">Priority Points</label>
+                <input id="priorityPoints" name="points" type="number" min="1" max="100000" placeholder="100">
+                <button type="submit">Save Role</button>
+              </form>
+
+              <form id="priorityOverrideForm" class="config-panel">
+                <h4>User Override</h4>
+                <label for="priorityDiscordId">Discord User ID</label>
+                <input id="priorityDiscordId" name="discordId" type="text" inputmode="numeric" placeholder="User ID">
+                <label for="priorityOverrideLabel">Label</label>
+                <input id="priorityOverrideLabel" name="label" type="text" placeholder="Manual priority">
+                <label for="priorityOverridePoints">Priority Points</label>
+                <input id="priorityOverridePoints" name="points" type="number" min="1" max="100000" placeholder="500">
+                <button type="submit">Save Override</button>
+              </form>
+            </div>
+            <div class="priority-grid">
+              <div class="config-panel">
+                <h4>Role Rules</h4>
+                <div id="priorityRulesList" class="config-list"></div>
+              </div>
+              <div class="config-panel">
+                <h4>User Overrides</h4>
+                <div id="priorityOverridesList" class="config-list"></div>
+              </div>
+            </div>
+          </section>
+
+          <section id="settingsView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Account Settings</h3>
+              <span>Firebase Auth</span>
+            </div>
+            <form id="passwordForm" class="config-panel">
+              <h4>Profile</h4>
+              <label for="displayName">Dashboard Name</label>
+              <input id="displayName" name="displayName" type="text" maxlength="80" autocomplete="name" placeholder="Your staff name">
+              <label for="currentPassword">Current Password</label>
+              <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+              <label for="newPassword">New Password</label>
+              <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="8" required>
+              <button type="submit">Change Password</button>
+              <p id="passwordNotice" class="form-notice"></p>
+            </form>
+            <div id="founderSettingsPanel" class="config-panel hidden">
+              <h4>Firebase User Roles</h4>
+              <div id="firebaseUsersList" class="config-list user-role-list">
+                <div><span>Loading Firebase users...</span><b>-</b></div>
+              </div>
+              <p id="firebaseUsersNotice" class="form-notice"></p>
+            </div>
+            <div id="founderCleanupPanel" class="config-panel hidden">
+              <h4>Cloud Run Cleanup</h4>
+              <div class="config-list">
+                <div><span>Remove</span><b>DASHBOARD_JWT_SECRET</b></div>
+                <div><span>Remove</span><b>ADMIN_UI_ROLE_IDS</b></div>
+                <div><span>Remove</span><b>DASHBOARD_*_EMAILS</b></div>
+                <div><span>Use</span><b>Firebase custom claims</b></div>
+                <div><span>Keep</span><b>MANAGEMENT_ROLE_ID</b></div>
+                <div><span>Keep</span><b>FOUNDER_ROLE_ID / FOUNDER_DISCORD_ID</b></div>
+              </div>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/dashboard/app.js"></script>
+  </body>
+</html>

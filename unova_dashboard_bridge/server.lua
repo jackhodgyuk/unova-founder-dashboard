@@ -131,6 +131,35 @@ local function checkAdminAccess(src, cb)
     end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
+local function checkLeadershipAccess(src, cb)
+    local discordId = getDiscordId(src)
+    if not discordId then
+        cb(false)
+        return
+    end
+
+    PerformHttpRequest(apiUrl('/fivem/leadership/check?discordId=' .. urlEncode(discordId)), function(status, body)
+        if status ~= 200 or not body then
+            cb(false)
+            return
+        end
+
+        local data = json.decode(body)
+        cb(data and data.allowed == true)
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
+end
+
+local function fetchTickets(cb)
+    PerformHttpRequest(apiUrl('/fivem/tickets'), function(status, body)
+        if status ~= 200 or not body then
+            cb({})
+            return
+        end
+        local data = json.decode(body)
+        cb(data and data.tickets or {})
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
+end
+
 local function getPlayerInfo(playerId)
     local player = tostring(playerId)
     local name = GetPlayerName(player)
@@ -163,6 +192,13 @@ local function notifyAdmin(src, message, ok)
     })
     TriggerClientEvent('chat:addMessage', src, {
         args = {'Unova Management', message}
+    })
+end
+
+local function notifyInEyes(src, title, message)
+    TriggerClientEvent('unova:admin:eyesNotice', src, {
+        title = title or 'Unova',
+        message = message or ''
     })
 end
 
@@ -224,13 +260,37 @@ local function pollModeration()
             local target = findPlayerForAction(action)
 
             if action.action == 'warn' and target then
-                TriggerClientEvent('chat:addMessage', target, {
-                    args = {'Unova Staff Warning', reason}
-                })
+                local ticketName = action.ticket and action.ticket.name or 'your golden lottery ticket'
+                notifyInEyes(target, 'Golden Lottery Ticket', ('You have received a warning: %s. Please respond to %s in Discord.'):format(reason, ticketName))
             elseif action.action == 'kick' and target then
                 DropPlayer(target, 'Kicked from Unova: ' .. reason)
             elseif action.action == 'ban' and target then
                 DropPlayer(target, 'Banned from Unova: ' .. reason)
+            end
+        end
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
+end
+
+local function pollCityNotifications()
+    PerformHttpRequest(apiUrl('/fivem/notifications/poll'), function(status, body, _, errorData)
+        if status ~= 200 or not body then
+            if status ~= 200 then
+                logHttpFailure('Notification poll', status, body, errorData)
+            end
+            return
+        end
+
+        local data = json.decode(body)
+        if not data or not data.notifications then return end
+
+        for _, notification in ipairs(data.notifications) do
+            for _, playerId in ipairs(GetPlayers()) do
+                local target = tonumber(playerId)
+                checkAdminAccess(target, function(allowed)
+                    if allowed then
+                        notifyInEyes(target, 'Unova Management', notification.message or 'New player report in Discord.')
+                    end
+                end)
             end
         end
     end, 'GET', '', { ['x-api-key'] = API_KEY })
@@ -250,12 +310,29 @@ local function openAdminPanel(src)
             return
         end
 
-        TriggerClientEvent('unova:admin:openPanel', src, getPlayerList())
+        checkLeadershipAccess(src, function(leadership)
+            if leadership then
+                fetchTickets(function(tickets)
+                    TriggerClientEvent('unova:admin:openPanel', src, getPlayerList(), tickets)
+                end)
+            else
+                TriggerClientEvent('unova:admin:openPanel', src, getPlayerList(), {})
+            end
+        end)
     end)
 end
 
 RegisterCommand('adminui', function(src)
     openAdminPanel(src)
+end, false)
+
+RegisterCommand('report', function(src)
+    if src == 0 then
+        print('[Unova Management] /report can only be opened in-game.')
+        return
+    end
+
+    TriggerClientEvent('unova:admin:openReport', src, getPlayerList())
 end, false)
 
 RegisterCommand('founderui', function(src)
@@ -316,7 +393,15 @@ RegisterNetEvent('unova:admin:refreshPlayers', function()
     local src = source
     checkAdminAccess(src, function(allowed)
         if not allowed then return end
-        TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList())
+        checkLeadershipAccess(src, function(leadership)
+            if leadership then
+                fetchTickets(function(tickets)
+                    TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList(), tickets)
+                end)
+            else
+                TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList(), {})
+            end
+        end)
     end)
 end)
 
@@ -368,6 +453,49 @@ RegisterNetEvent('unova:admin:moderate', function(data)
             ['x-api-key'] = API_KEY
         })
     end)
+end)
+
+RegisterNetEvent('unova:report:submit', function(data)
+    local src = source
+    if type(data) ~= 'table' then return end
+
+    local offenderId = tonumber(data.offenderPlayerId)
+    local offenderInfo = offenderId and getPlayerInfo(offenderId) or nil
+    if not offenderInfo then
+        notifyInEyes(src, 'Golden Lottery Ticket', 'That city ID is not online right now.')
+        return
+    end
+
+    local bodycamUrl = tostring(data.bodycamUrl or '')
+    local description = tostring(data.description or '')
+    if bodycamUrl == '' or description == '' then
+        notifyInEyes(src, 'Golden Lottery Ticket', 'Bodycam and what happened are required.')
+        return
+    end
+
+    local reporterInfo = getPlayerInfo(src)
+    local payload = {
+        reporterPlayerId = reporterInfo and reporterInfo.id or src,
+        reporterName = reporterInfo and reporterInfo.name or GetPlayerName(src),
+        reporterDiscordId = getDiscordId(src),
+        offenderPlayerId = offenderInfo.id,
+        offenderName = offenderInfo.name,
+        offenderDiscordId = offenderInfo.discordId,
+        bodycamUrl = bodycamUrl,
+        description = description
+    }
+
+    PerformHttpRequest(apiUrl('/fivem/reports'), function(status, body, _, errorData)
+        if status == 200 then
+            notifyInEyes(src, 'Golden Lottery Ticket', 'Your golden lottery ticket has been opened in Discord.')
+            return
+        end
+        notifyInEyes(src, 'Golden Lottery Ticket', 'Report failed. Please try again or contact staff.')
+        logHttpFailure('Player report', status, body, errorData)
+    end, 'POST', json.encode(payload), {
+        ['Content-Type'] = 'application/json',
+        ['x-api-key'] = API_KEY
+    })
 end)
 
 AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
@@ -465,5 +593,12 @@ CreateThread(function()
     while true do
         pollModeration()
         Wait(3000)
+    end
+end)
+
+CreateThread(function()
+    while true do
+        pollCityNotifications()
+        Wait(5000)
     end
 end)

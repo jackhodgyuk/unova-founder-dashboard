@@ -91,18 +91,15 @@ Create users in:
 Authentication -> Users -> Add user
 ```
 
-The dashboard does not create Firebase users. It signs them in with Firebase email/password and lets the signed-in user change their own password.
+The dashboard does not create Firebase users. It signs them in with Firebase email/password and lets the signed-in user change their own dashboard name and password.
 
-Give dashboard access using either Firebase custom claims or these Cloud Run email lists:
+The founder can assign dashboard roles in Settings after their own Firebase user has the founder custom claim.
+
+`jackhodgyuk@gmail.com` is locked as the founder account by default. Override only if ownership changes:
 
 ```env
-DASHBOARD_FOUNDER_EMAILS=you@example.com
-DASHBOARD_OWNER_EMAILS=
-DASHBOARD_CO_OWNER_EMAILS=
-DASHBOARD_ADMIN_EMAILS=
+LOCKED_FOUNDER_EMAIL=jackhodgyuk@gmail.com
 ```
-
-Comma-separate multiple emails.
 
 ## Optional Firebase Variables
 
@@ -124,7 +121,10 @@ Dashboard access can also be granted by Firebase custom claims:
 { "unovaRole": "founder" }
 { "unovaRole": "owner" }
 { "unovaRole": "co_owner" }
-{ "unovaRole": "admin" }
+{ "unovaRole": "server_manager" }
+{ "unovaRole": "staff_manager" }
+{ "unovaRole": "senior_staff" }
+{ "unovaRole": "staff" }
 ```
 
 If you want dashboard moderation tickets to show the moderator as a Discord mention, also set this custom claim on that Firebase user:
@@ -135,4 +135,41 @@ If you want dashboard moderation tickets to show the moderator as a Discord ment
 
 ## Variables To Remove
 
-Remove these old variables after this deplo
+Remove these old variables after this deployment is live:
+
+```env
+DASHBOARD_JWT_SECRET
+ADMIN_UI_ROLE_IDS
+FOUNDER_FIREBASE_UID
+MANAGEMENT_ROLE_IDS
+ADMIN_UI_ROLE_NAMES
+MANAGEMENT_ROLE_NAMES
+DASHBOARD_FOUNDER_EMAILS
+DASHBOARD_OWNER_EMAILS
+DASHBOARD_CO_OWNER_EMAILS
+DASHBOARD_ADMIN_EMAILS
+```
+
+Keep `MANAGEMENT_ROLE_ID`; that is now the one Discord role that controls Discord bot permissions and in-city `/adminui` permissions.
+
+Keep `FOUNDER_DISCORD_ID` and `FOUNDER_ROLE_ID` if you want founder-only Discord settings and locked-ticket override protection. They do not control dashboard login anymore; Firebase custom claims do that.
+
+## XRealm Server Config
+
+After Cloud Run deploys, update XRealm:
+
+```cfg
+set unova_dashboard_url "https://YOUR-CLOUD-RUN-URL"
+set unova_dashboard_key "same value as FIVEM_API_KEY"
+
+ensure unova_dashboard_bridge
+```
+
+You do not need `set unova_founder_discord_id` anymore. The city asks Cloud Run whether the player's Discord ID has `MANAGEMENT_ROLE_ID`.
+
+## Test URLs
+
+```txt
+https://YOUR-CLOUD-RUN-URL/healthz
+https://YOUR-CLOUD-RUN-URL/dashboard/
+```

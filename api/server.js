@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { Storage } = require('@google-cloud/storage');
+const admin = require('firebase-admin');
 const pool = require('./db');
 
 loadEnvFile();
@@ -19,10 +21,13 @@ const firebasePublicConfigFallback = {
   measurementId: 'G-196R8VL78F'
 };
 const dashboardRoleRank = {
-  admin: 1,
-  co_owner: 2,
-  owner: 3,
-  founder: 4
+  staff: 1,
+  senior_staff: 2,
+  staff_manager: 3,
+  server_manager: 4,
+  co_owner: 5,
+  owner: 6,
+  founder: 7
 };
 const firebaseReservedClaims = new Set([
   'iss',
@@ -47,14 +52,23 @@ const ticketAllow = [
   16384n // EmbedLinks
 ].reduce((value, permission) => value | permission, 0n).toString();
 const ticketDenyView = '1024';
+const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
+const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state.json';
+const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
+const storage = new Storage();
+let firebaseAdminApp = null;
 
 const state = {
   fivemOnlinePlayers: [],
   latestStatus: null,
   moderationQueue: [],
+  cityNotifications: [],
   recentModerationActions: [],
   priorityRules: [],
   priorityOverrides: [],
+  openTickets: [],
+  stateLoaded: false,
+  stateLoadPromise: null,
   firebaseCerts: null,
   firebaseCertsExpiresAt: 0
 };
@@ -106,6 +120,82 @@ function sendJson(res, status, payload) {
 function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': contentType });
   res.end(body);
+}
+
+function getStateBucketName() {
+  return process.env.UNOVA_STATE_BUCKET
+    || process.env.STATE_BUCKET
+    || (process.env.GOOGLE_CLOUD_PROJECT ? `${process.env.GOOGLE_CLOUD_PROJECT}-unova-dashboard-state` : null);
+}
+
+function persistentStatePayload() {
+  return {
+    priorityRules: state.priorityRules,
+    priorityOverrides: state.priorityOverrides,
+    openTickets: state.openTickets,
+    savedAt: new Date().toISOString()
+  };
+}
+
+async function ensureStateLoaded() {
+  if (state.stateLoaded) return;
+  if (state.stateLoadPromise) return state.stateLoadPromise;
+
+  state.stateLoadPromise = (async () => {
+    const bucketName = getStateBucketName();
+    if (!bucketName) {
+      state.priorityRules = parsePriorityRoleRules();
+      state.stateLoaded = true;
+      return;
+    }
+
+    try {
+      const bucket = storage.bucket(bucketName);
+      const [exists] = await bucket.exists();
+      if (!exists) {
+        await bucket.create({
+          location: process.env.UNOVA_STATE_BUCKET_LOCATION || 'europe-west1',
+          uniformBucketLevelAccess: true
+        });
+      }
+
+      const file = bucket.file(stateObjectName);
+      const [fileExists] = await file.exists();
+      if (fileExists) {
+        const [contents] = await file.download();
+        const stored = JSON.parse(contents.toString('utf8'));
+        state.priorityRules = Array.isArray(stored.priorityRules) ? stored.priorityRules.map(normalizePriorityRule).filter(Boolean) : [];
+        state.priorityOverrides = Array.isArray(stored.priorityOverrides) ? stored.priorityOverrides.map(normalizePriorityOverride).filter(Boolean) : [];
+        state.openTickets = Array.isArray(stored.openTickets) ? stored.openTickets.map(normalizeOpenTicket).filter(Boolean) : [];
+      }
+
+      if (!state.priorityRules.length) {
+        state.priorityRules = parsePriorityRoleRules();
+      }
+    } catch (error) {
+      console.warn(`[Unova API] Persistent state unavailable: ${error.message}`);
+      if (!state.priorityRules.length) state.priorityRules = parsePriorityRoleRules();
+    } finally {
+      state.stateLoaded = true;
+    }
+  })();
+
+  return state.stateLoadPromise;
+}
+
+async function savePersistentState() {
+  const bucketName = getStateBucketName();
+  if (!bucketName) return;
+
+  try {
+    const bucket = storage.bucket(bucketName);
+    await bucket.file(stateObjectName).save(JSON.stringify(persistentStatePayload(), null, 2), {
+      contentType: 'application/json; charset=utf-8',
+      resumable: false
+    });
+  } catch (error) {
+    console.warn(`[Unova API] Persistent state save failed: ${error.message}`);
+  }
 }
 
 function redirect(res, location) {
@@ -201,6 +291,17 @@ function getFirebasePublicConfig() {
   return { configured, config: configured ? config : null };
 }
 
+function getFirebaseAdminAuth() {
+  if (!firebaseAdminApp) {
+    firebaseAdminApp = admin.initializeApp({
+      credential: admin.credential.applicationDefault(),
+      projectId: process.env.FIREBASE_PROJECT_ID || firebasePublicConfigFallback.projectId
+    });
+  }
+
+  return firebaseAdminApp.auth();
+}
+
 function normalizeDashboardRole(value) {
   const role = String(value || '')
     .trim()
@@ -208,6 +309,9 @@ function normalizeDashboardRole(value) {
     .replace(/[\s-]+/g, '_');
 
   if (role === 'coowner' || role === 'co_owner') return 'co_owner';
+  if (role === 'servermanager' || role === 'server_manager') return 'server_manager';
+  if (role === 'staffmanager' || role === 'staff_manager') return 'staff_manager';
+  if (role === 'seniorstaff' || role === 'senior_staff') return 'senior_staff';
   if (dashboardRoleRank[role]) return role;
   return null;
 }
@@ -242,44 +346,15 @@ function getDashboardRolesFromClaims(claims = {}) {
   }
 
   if (claims.coOwner === true || claims.co_owner === true) roles.add('co_owner');
-  if (claims.management === true || claims.unovaManagement === true) roles.add('admin');
+  if (claims.serverManager === true || claims.server_manager === true) roles.add('server_manager');
+  if (claims.staffManager === true || claims.staff_manager === true) roles.add('staff_manager');
+  if (claims.seniorStaff === true || claims.senior_staff === true) roles.add('senior_staff');
+  if (claims.management === true || claims.unovaManagement === true) roles.add('staff');
   return [...roles].sort((a, b) => dashboardRoleRank[b] - dashboardRoleRank[a]);
 }
 
-function normalizeEmail(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function splitEmailConfig(...values) {
-  return values
-    .flatMap((value) => String(value || '').split(','))
-    .map(normalizeEmail)
-    .filter(Boolean);
-}
-
-function emailMatchesConfig(email, ...values) {
-  const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail) return false;
-  return splitEmailConfig(...values).includes(normalizedEmail);
-}
-
-function getDashboardRolesFromEmail(email) {
-  const roles = new Set();
-
-  if (emailMatchesConfig(email, process.env.DASHBOARD_FOUNDER_EMAILS, process.env.FOUNDER_FIREBASE_EMAIL)) {
-    roles.add('founder');
-  }
-  if (emailMatchesConfig(email, process.env.DASHBOARD_OWNER_EMAILS)) {
-    roles.add('owner');
-  }
-  if (emailMatchesConfig(email, process.env.DASHBOARD_CO_OWNER_EMAILS, process.env.DASHBOARD_COOWNER_EMAILS)) {
-    roles.add('co_owner');
-  }
-  if (emailMatchesConfig(email, process.env.DASHBOARD_ADMIN_EMAILS, process.env.ADMIN_FIREBASE_EMAILS)) {
-    roles.add('admin');
-  }
-
-  return [...roles].sort((a, b) => dashboardRoleRank[b] - dashboardRoleRank[a]);
+function isLockedFounderEmail(email) {
+  return lockedFounderEmail && String(email || '').trim().toLowerCase() === lockedFounderEmail;
 }
 
 function mergeDashboardRoles(...roleLists) {
@@ -294,6 +369,44 @@ function mergeDashboardRoles(...roleLists) {
 
 function getPrimaryDashboardRole(roles) {
   return [...(roles || [])].sort((a, b) => dashboardRoleRank[b] - dashboardRoleRank[a])[0] || null;
+}
+
+function publicFirebaseUser(userRecord) {
+  const claims = userRecord.customClaims || {};
+  const roles = new Set(getDashboardRolesFromClaims(claims));
+  if (isLockedFounderEmail(userRecord.email)) roles.add('founder');
+  const roleList = [...roles].sort((a, b) => dashboardRoleRank[b] - dashboardRoleRank[a]);
+  const fallbackName = userRecord.displayName || `Firebase User ${String(userRecord.uid).slice(-6)}`;
+  return {
+    uid: userRecord.uid,
+    name: fallbackName,
+    email: userRecord.email || null,
+    picture: userRecord.photoURL || null,
+    disabled: userRecord.disabled === true,
+    roles: roleList,
+    role: getPrimaryDashboardRole(roleList),
+    createdAt: userRecord.metadata?.creationTime || null,
+    lastSignInAt: userRecord.metadata?.lastSignInTime || null
+  };
+}
+
+function dashboardClaimsWithRole(existingClaims, role) {
+  const nextClaims = { ...(existingClaims || {}) };
+  delete nextClaims.unovaRole;
+  delete nextClaims.dashboardRole;
+  delete nextClaims.role;
+  delete nextClaims.roles;
+  delete nextClaims.unovaRoles;
+  delete nextClaims.founder;
+  delete nextClaims.owner;
+  delete nextClaims.coOwner;
+  delete nextClaims.co_owner;
+  delete nextClaims.admin;
+  delete nextClaims.management;
+  delete nextClaims.unovaManagement;
+
+  if (role) nextClaims.unovaRole = role;
+  return nextClaims;
 }
 
 function extractCustomClaims(payload) {
@@ -330,7 +443,6 @@ function requireDashboardRole(user, res, minimumRole) {
 function publicDashboardUser(user) {
   return {
     uid: user.uid,
-    email: user.email,
     name: user.name,
     picture: user.picture,
     discordId: user.discordId,
@@ -383,10 +495,8 @@ async function verifyFirebaseIdToken(idToken) {
   if (!valid) throw new Error('Firebase token signature mismatch.');
 
   const claims = extractCustomClaims(payload);
-  const roles = mergeDashboardRoles(
-    getDashboardRolesFromClaims(claims),
-    getDashboardRolesFromEmail(payload.email)
-  );
+  const roles = getDashboardRolesFromClaims(claims);
+  if (isLockedFounderEmail(payload.email)) roles.add('founder');
   return {
     uid: payload.user_id || payload.sub,
     email: payload.email || null,
@@ -408,9 +518,8 @@ async function requireDashboardUser(req, res) {
     if (!hasDashboardAccess(user)) {
       sendJson(res, 403, {
         error: 'Firebase dashboard role required.',
-        message: 'Add this email to DASHBOARD_FOUNDER_EMAILS, DASHBOARD_OWNER_EMAILS, DASHBOARD_CO_OWNER_EMAILS, or DASHBOARD_ADMIN_EMAILS in Cloud Run.',
-        email: user.email,
-        requiredRoles: ['founder', 'owner', 'co_owner', 'admin']
+      message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, or staff.',
+        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff']
       });
       return null;
     }
@@ -428,6 +537,12 @@ function requireFiveM(req, res) {
     return false;
   }
   return true;
+}
+
+function requireInternal(req, res) {
+  if (process.env.FIVEM_API_KEY && req.headers['x-api-key'] === process.env.FIVEM_API_KEY) return true;
+  sendJson(res, 401, { error: 'Invalid internal API key.' });
+  return false;
 }
 
 function cleanId(value) {
@@ -667,6 +782,39 @@ async function memberHasManagementAccess(discordId) {
   return hasAnyRole(member.roles || [], allowedRoleIds);
 }
 
+async function memberHasLeadershipAccess(discordId) {
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const userId = cleanId(discordId);
+  if (!userId || !guildId || !token) return false;
+
+  const member = await getDiscordMember(token, guildId, userId).catch(() => null);
+  if (!member) return false;
+
+  const roleIds = await resolveConfiguredRoleIds(
+    token,
+    guildId,
+    [
+      process.env.CO_OWNER_ROLE_ID,
+      process.env.CO_OWNER_ROLE_IDS,
+      process.env.OWNER_ROLE_ID,
+      process.env.OWNER_ROLE_IDS,
+      process.env.FOUNDER_ROLE_ID,
+      process.env.FOUNDER_ROLE_IDS
+    ],
+    [
+      process.env.CO_OWNER_ROLE_NAME,
+      process.env.CO_OWNER_ROLE_NAMES,
+      process.env.OWNER_ROLE_NAME,
+      process.env.OWNER_ROLE_NAMES,
+      process.env.FOUNDER_ROLE_NAME,
+      process.env.FOUNDER_ROLE_NAMES
+    ]
+  );
+
+  return hasAnyRole(member.roles || [], roleIds) || userId === cleanId(process.env.FOUNDER_DISCORD_ID);
+}
+
 async function fetchDiscordUserLabel(userId) {
   const token = process.env.DISCORD_BOT_TOKEN;
   const cleanUserId = cleanId(userId);
@@ -692,6 +840,56 @@ function makeManagementMentionLine() {
     return `Management role: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
   }
   return 'Management role: not configured';
+}
+
+function normalizeOpenTicket(value) {
+  if (!value || typeof value !== 'object') return null;
+  const id = String(value.id || '').trim();
+  if (!id) return null;
+  return {
+    id,
+    channelId: cleanId(value.channelId),
+    guildId: cleanId(value.guildId) || cleanId(process.env.DISCORD_GUILD_ID),
+    channelName: String(value.channelName || value.name || 'ticket').slice(0, 100),
+    kind: String(value.kind || 'ticket').slice(0, 40),
+    level: String(value.level || 'management').slice(0, 40),
+    openerId: cleanId(value.openerId),
+    openerName: String(value.openerName || '').slice(0, 120),
+    targetId: cleanId(value.targetId),
+    targetName: String(value.targetName || '').slice(0, 120),
+    source: String(value.source || 'discord').slice(0, 60),
+    locked: value.locked === true || value.locked === 'true',
+    status: value.status === 'closed' ? 'closed' : 'open',
+    createdAt: value.createdAt || new Date().toISOString(),
+    updatedAt: value.updatedAt || value.createdAt || new Date().toISOString()
+  };
+}
+
+async function upsertOpenTicket(ticket) {
+  await ensureStateLoaded();
+  const normalized = normalizeOpenTicket(ticket);
+  if (!normalized) return null;
+  state.openTickets = state.openTickets.filter((item) => item.id !== normalized.id);
+  state.openTickets.unshift(normalized);
+  state.openTickets = state.openTickets.slice(0, 250);
+  await savePersistentState();
+  return normalized;
+}
+
+async function closeOpenTicket(id) {
+  await ensureStateLoaded();
+  const ticketId = String(id || '').trim();
+  const existing = state.openTickets.find((item) => item.id === ticketId || item.channelId === ticketId);
+  if (!existing) return null;
+  existing.status = 'closed';
+  existing.updatedAt = new Date().toISOString();
+  await savePersistentState();
+  return existing;
+}
+
+async function activeTickets() {
+  await ensureStateLoaded();
+  return state.openTickets.filter((ticket) => ticket.status !== 'closed');
 }
 
 function parsePriorityRoleRules() {
@@ -725,22 +923,22 @@ function normalizePriorityOverride(value) {
   };
 }
 
-function getPriorityRules() {
-  if (!state.priorityRules.length) {
-    state.priorityRules = parsePriorityRoleRules();
-  }
+async function getPriorityRules() {
+  await ensureStateLoaded();
   return state.priorityRules;
 }
 
-function getPriorityOverrides() {
+async function getPriorityOverrides() {
+  await ensureStateLoaded();
   return state.priorityOverrides;
 }
 
 async function calculatePriority(discordId) {
+  await ensureStateLoaded();
   const userId = cleanId(discordId);
   if (!userId) return { points: 0, label: 'Standard Queue', matches: [] };
 
-  const override = getPriorityOverrides().find((entry) => entry.discordId === userId);
+  const override = state.priorityOverrides.find((entry) => entry.discordId === userId);
   const guildId = cleanId(process.env.DISCORD_GUILD_ID);
   const token = process.env.DISCORD_BOT_TOKEN;
   const matches = [];
@@ -749,7 +947,7 @@ async function calculatePriority(discordId) {
   if (guildId && token) {
     const member = await getDiscordMember(token, guildId, userId).catch(() => null);
     const memberRoles = new Set(member?.roles || []);
-    for (const rule of getPriorityRules()) {
+    for (const rule of state.priorityRules) {
       if (!memberRoles.has(rule.roleId)) continue;
       matches.push(rule);
       if (!top || rule.points > top.points) {
@@ -860,14 +1058,105 @@ async function createDiscordModerationTicket(moderationAction) {
         '',
         'Only management access, bot access, and explicitly added users can see this ticket.'
       ].join('\n'),
+      embeds: [{
+        color: 2807784,
+        thumbnail: { url: unovaLogoUrl },
+        footer: { text: 'Unova Management' }
+      }],
       allowed_mentions: {
         parse: ['roles', 'users']
       }
     });
 
+    await upsertOpenTicket({
+      id: channel.id,
+      channelId: channel.id,
+      guildId,
+      channelName: channel.name,
+      kind: `moderation:${moderationAction.action}`,
+      level: 'management',
+      openerId: moderationAction.moderatorDiscordId,
+      openerName: moderationAction.moderatorDiscordName || moderationAction.moderatorDisplayName,
+      targetId: targetDiscordId,
+      targetName: moderationAction.targetDiscordName || moderationAction.playerName,
+      source: moderationAction.source,
+      locked: true,
+      status: 'open'
+    });
+
     return { id: channel.id, name: channel.name };
   } catch (error) {
     console.warn(`[Unova API] Discord ticket creation failed: ${error.response?.data?.message || error.message}`);
+    return null;
+  }
+}
+
+async function createDiscordPlayerReportTicket(report) {
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!guildId || !token) return null;
+
+  const reporterDiscordId = cleanId(report.reporterDiscordId);
+  const offenderDiscordId = cleanId(report.offenderDiscordId);
+  const channelName = sanitizeChannelName(`report-${report.offenderPlayerId || 'unknown'}-${Date.now().toString().slice(-5)}`);
+  const body = {
+    name: channelName,
+    type: 0,
+    topic: `unova-support-ticket | kind=player_report | level=leadership | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
+    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean))
+  };
+
+  const categoryId = await resolveTicketCategoryId(token, guildId).catch(() => null);
+  if (categoryId) body.parent_id = categoryId;
+
+  try {
+    const channel = await postDiscord(token, `/guilds/${guildId}/channels`, body);
+    const managementLine = makeManagementMentionLine();
+    await postDiscord(token, `/channels/${channel.id}/messages`, {
+      content: [
+        managementLine,
+        '**New player report from city**',
+        `Reporter: ${report.reporterName || 'unknown'}${reporterDiscordId ? ` (<@${reporterDiscordId}>)` : ''}`,
+        `Possible offender: ${report.offenderName || 'unknown'} | City ID: ${report.offenderPlayerId || 'unknown'}${offenderDiscordId ? ` | <@${offenderDiscordId}>` : ''}`,
+        `Bodycam: ${report.bodycamUrl}`,
+        '',
+        report.description
+      ].join('\n'),
+      embeds: [{
+        color: 2807784,
+        thumbnail: { url: unovaLogoUrl },
+        footer: { text: 'Golden lottery ticket opened from city' }
+      }],
+      allowed_mentions: { parse: ['roles', 'users'] }
+    });
+
+    const ticket = await upsertOpenTicket({
+      id: channel.id,
+      channelId: channel.id,
+      guildId,
+      channelName: channel.name,
+      kind: 'player_report',
+      level: 'leadership',
+      openerId: reporterDiscordId,
+      openerName: report.reporterName,
+      targetId: offenderDiscordId,
+      targetName: report.offenderName || `City ID ${report.offenderPlayerId}`,
+      source: 'fivem-report',
+      locked: false,
+      status: 'open'
+    });
+
+    state.cityNotifications.push({
+      id: Date.now().toString(),
+      type: 'ticket',
+      message: `New player report in Discord: ${channel.name}`,
+      ticket,
+      createdAt: new Date().toISOString()
+    });
+    state.cityNotifications = state.cityNotifications.slice(-50);
+    return { id: channel.id, name: channel.name };
+  } catch (error) {
+    console.warn(`[Unova API] Player report ticket creation failed: ${error.response?.data?.message || error.message}`);
     return null;
   }
 }
@@ -880,10 +1169,10 @@ function normalizeModerator(moderator) {
   const source = moderator || {};
   return {
     discordId: cleanId(source.discordId),
-    displayName: source.name || source.email || null,
+    displayName: source.name || 'Dashboard user',
     role: source.role || null,
     firebaseUid: source.uid || source.firebaseUid || null,
-    email: source.email || null
+    email: null
   };
 }
 
@@ -914,4 +1203,450 @@ async function recordModerationAction(action, body, moderator, source) {
     playerName: body.playerName || null,
     reason,
     moderatorDiscordId: normalizedModerator.discordId,
-    moderatorDiscor
+    moderatorDiscordName,
+    moderatorDisplayName: normalizedModerator.displayName,
+    moderatorRole: normalizedModerator.role,
+    moderatorFirebaseUid: normalizedModerator.firebaseUid,
+    moderatorEmail: null,
+    source,
+    createdAt: new Date().toISOString()
+  };
+
+  await safeQuery(
+    'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      moderationAction.action,
+      moderationAction.discordId,
+      moderationAction.citizenid,
+      moderationAction.license,
+      moderationAction.reason,
+      moderationAction.moderatorDiscordId
+    ]
+  );
+
+  if (moderationAction.action === 'ban') {
+    await safeQuery(
+      'INSERT INTO fivem_bans (license, discord_id, citizenid, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?)',
+      [
+        moderationAction.license || 'unknown',
+        moderationAction.discordId,
+        moderationAction.citizenid,
+        moderationAction.reason,
+        moderationAction.moderatorDiscordId
+      ]
+    );
+  }
+
+  const discordRoleUpdate = await applyDiscordBanRole(moderationAction);
+  const ticket = await createDiscordModerationTicket(moderationAction);
+  moderationAction.ticket = ticket;
+  state.moderationQueue.push(moderationAction);
+  state.recentModerationActions.unshift(moderationAction);
+  state.recentModerationActions = state.recentModerationActions.slice(0, 50);
+  return { status: 200, payload: { ok: true, moderationAction, discordRoleUpdate, ticket } };
+}
+
+function getMemoryStatus() {
+  return normalizeStatus(state.latestStatus);
+}
+
+async function getPersistedStatus() {
+  const [rows] = await safeQuery('SELECT * FROM server_status WHERE id = 1');
+  return normalizeStatus(rows[0] || state.latestStatus);
+}
+
+async function handleRequest(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pathname = requestUrl.pathname;
+
+  if (req.method === 'GET' && (pathname === '/health' || pathname === '/healthz')) {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/') {
+    redirect(res, '/dashboard/');
+    return;
+  }
+
+  if (req.method === 'GET' && (pathname === '/dashboard' || pathname === '/dashboard/')) {
+    sendFile(res, path.join(dashboardDir, 'index.html'));
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/firebase-config') {
+    sendJson(res, 200, getFirebasePublicConfig());
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/auth/firebase-login') {
+    const body = await readBody(req);
+    let firebaseUser;
+    try {
+      firebaseUser = await verifyFirebaseIdToken(body.idToken);
+    } catch (error) {
+      console.warn(`[Unova API] Firebase login rejected: ${error.message}`);
+      sendJson(res, 401, { error: 'Invalid Firebase login.' });
+      return;
+    }
+
+    if (!hasDashboardAccess(firebaseUser)) {
+      sendJson(res, 403, {
+        error: 'Firebase dashboard role required.',
+        message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, or staff.',
+        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff']
+      });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      user: publicDashboardUser(firebaseUser)
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/fivem/update') {
+    if (!requireFiveM(req, res)) return;
+
+    const status = await readBody(req);
+    state.latestStatus = {
+      ...status,
+      updatedAt: status.updatedAt || new Date().toISOString()
+    };
+    state.fivemOnlinePlayers = status.players || [];
+    await safeQuery(
+      `INSERT INTO server_status (id, server_name, online_players, max_players, players_json)
+       VALUES (1, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE server_name=VALUES(server_name), online_players=VALUES(online_players), max_players=VALUES(max_players), players_json=VALUES(players_json)`,
+      [status.serverName, status.onlinePlayers, status.maxPlayers, JSON.stringify(status.players || [])]
+    );
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/players') {
+    const fivem = getMemoryStatus();
+    sendJson(res, 200, {
+      fivem,
+      players: fivem.players || []
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/internal/fivem/online-discord-ids') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordIds = state.fivemOnlinePlayers
+      .map((player) => cleanId(player.discordId))
+      .filter(Boolean);
+    sendJson(res, 200, { discordIds });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/tickets/upsert') {
+    if (!requireInternal(req, res)) return;
+    const ticket = await upsertOpenTicket(await readBody(req));
+    sendJson(res, ticket ? 200 : 400, ticket ? { ok: true, ticket } : { error: 'Invalid ticket.' });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/tickets/close') {
+    if (!requireInternal(req, res)) return;
+    const body = await readBody(req);
+    const ticket = await closeOpenTicket(body.id || body.channelId);
+    sendJson(res, 200, { ok: true, ticket });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/city/notify') {
+    if (!requireInternal(req, res)) return;
+    const body = await readBody(req);
+    state.cityNotifications.push({
+      id: Date.now().toString(),
+      type: body.type || 'ticket',
+      message: String(body.message || 'New Discord ticket.').slice(0, 240),
+      createdAt: new Date().toISOString()
+    });
+    state.cityNotifications = state.cityNotifications.slice(-50);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/access/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      allowed: await memberHasManagementAccess(discordId),
+      discordId
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/leadership/check') {
+    if (!requireFiveM(req, res)) return;
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      allowed: await memberHasLeadershipAccess(discordId),
+      discordId
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/tickets') {
+    if (!requireFiveM(req, res)) return;
+    sendJson(res, 200, { tickets: await activeTickets() });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/priority/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    sendJson(res, 200, {
+      discordId,
+      priority: await calculatePriority(discordId)
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/notifications/poll') {
+    if (!requireFiveM(req, res)) return;
+    const notifications = state.cityNotifications.splice(0, 25);
+    sendJson(res, 200, { notifications });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/fivem/reports') {
+    if (!requireFiveM(req, res)) return;
+    const body = await readBody(req);
+    const offenderPlayerId = Number(body.offenderPlayerId);
+    const report = {
+      reporterPlayerId: body.reporterPlayerId || null,
+      reporterName: String(body.reporterName || 'unknown').slice(0, 120),
+      reporterDiscordId: cleanId(body.reporterDiscordId),
+      offenderPlayerId: Number.isFinite(offenderPlayerId) ? offenderPlayerId : null,
+      offenderName: String(body.offenderName || 'unknown').slice(0, 120),
+      offenderDiscordId: cleanId(body.offenderDiscordId),
+      bodycamUrl: String(body.bodycamUrl || '').trim().slice(0, 500),
+      description: String(body.description || '').trim().slice(0, 2000),
+      createdAt: new Date().toISOString()
+    };
+    if (!report.offenderPlayerId || !report.bodycamUrl || !report.description) {
+      sendJson(res, 400, { error: 'Offender player ID, bodycam link, and description are required.' });
+      return;
+    }
+    const ticket = await createDiscordPlayerReportTicket(report);
+    sendJson(res, ticket ? 200 : 500, ticket ? { ok: true, ticket } : { error: 'Could not open Discord ticket.' });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/status') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const fivem = await getPersistedStatus();
+    sendJson(res, 200, {
+      user: publicDashboardUser(user),
+      fivem,
+      players: fivem.players || [],
+      queueLength: state.moderationQueue.length,
+      recentActions: state.recentModerationActions,
+      openTickets: hasDashboardRoleAtLeast(user, 'co_owner') ? await activeTickets() : []
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/priority') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    sendJson(res, 200, {
+      rules: await getPriorityRules(),
+      overrides: await getPriorityOverrides()
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/users') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    try {
+      const result = await getFirebaseAdminAuth().listUsers(1000);
+      sendJson(res, 200, { users: result.users.map(publicFirebaseUser) });
+    } catch (error) {
+      console.warn(`[Unova API] Firebase user list failed: ${error.message}`);
+      sendJson(res, 500, { error: 'Could not load Firebase users.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/users/role') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const uid = String(body.uid || '').trim();
+    const role = normalizeDashboardRole(body.role);
+    const clearingRole = String(body.role || '').trim() === '';
+    if (!uid || (!role && !clearingRole)) {
+      sendJson(res, 400, { error: 'Valid Firebase UID and role are required.' });
+      return;
+    }
+    if (uid === user.uid && role !== 'founder') {
+      sendJson(res, 400, { error: 'You cannot remove founder access from your own account.' });
+      return;
+    }
+
+    try {
+      const auth = getFirebaseAdminAuth();
+      const target = await auth.getUser(uid);
+      if (isLockedFounderEmail(target.email) && role !== 'founder') {
+        sendJson(res, 400, { error: `${lockedFounderEmail} is the locked founder account.` });
+        return;
+      }
+      await auth.setCustomUserClaims(uid, dashboardClaimsWithRole(target.customClaims, role));
+      const updated = await auth.getUser(uid);
+      sendJson(res, 200, { ok: true, user: publicFirebaseUser(updated) });
+    } catch (error) {
+      console.warn(`[Unova API] Firebase role update failed: ${error.message}`);
+      sendJson(res, 500, { error: 'Could not update Firebase user role.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/rules') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const rule = normalizePriorityRule(await readBody(req));
+    if (!rule) {
+      sendJson(res, 400, { error: 'Valid roleId and points are required.' });
+      return;
+    }
+    state.priorityRules = (await getPriorityRules()).filter((item) => item.roleId !== rule.roleId);
+    state.priorityRules.unshift(rule);
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, rules: await getPriorityRules() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/rules/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const roleId = cleanId(body.roleId);
+    state.priorityRules = (await getPriorityRules()).filter((item) => item.roleId !== roleId);
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, rules: await getPriorityRules() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/overrides') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const override = normalizePriorityOverride(await readBody(req));
+    if (!override) {
+      sendJson(res, 400, { error: 'Valid discordId and points are required.' });
+      return;
+    }
+    state.priorityOverrides = (await getPriorityOverrides()).filter((item) => item.discordId !== override.discordId);
+    state.priorityOverrides.unshift(override);
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, overrides: await getPriorityOverrides() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/priority/overrides/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId);
+    state.priorityOverrides = (await getPriorityOverrides()).filter((item) => item.discordId !== discordId);
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, overrides: await getPriorityOverrides() });
+    return;
+  }
+
+  const dashboardModerationMatch = pathname.match(/^\/dashboard\/moderation\/([^/]+)$/);
+  if (req.method === 'POST' && dashboardModerationMatch) {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const result = await recordModerationAction(
+      dashboardModerationMatch[1],
+      await readBody(req),
+      user,
+      'dashboard'
+    );
+    sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  const fivemModerationMatch = pathname.match(/^\/fivem\/(?:founder|admin)\/moderation\/([^/]+)$/);
+  if (req.method === 'POST' && fivemModerationMatch) {
+    if (!requireFiveM(req, res)) return;
+
+    const body = await readBody(req);
+    if (!await memberHasManagementAccess(body.moderatorDiscordId)) {
+      sendJson(res, 403, { error: 'Management access required.' });
+      return;
+    }
+
+    const result = await recordModerationAction(
+      fivemModerationMatch[1],
+      body,
+      cleanId(body.moderatorDiscordId),
+      'fivem-ui'
+    );
+    sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/moderation/poll') {
+    if (!requireFiveM(req, res)) return;
+
+    const actions = state.moderationQueue.splice(0, 25);
+    sendJson(res, 200, { actions });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/bans/check') {
+    if (!requireFiveM(req, res)) return;
+
+    const license = requestUrl.searchParams.get('license');
+    const [rows] = await safeQuery('SELECT * FROM fivem_bans WHERE license = ? AND active = 1 LIMIT 1', [license]);
+    sendJson(res, 200, { banned: rows.length > 0, ban: rows[0] || null });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname.startsWith('/dashboard/')) {
+    const relativePath = decodeURIComponent(pathname.slice('/dashboard/'.length));
+    sendFile(res, path.join(dashboardDir, relativePath));
+    return;
+  }
+
+  sendJson(res, 404, { error: 'Not found.' });
+}
+
+function startServer(onListening) {
+  const port = Number(process.env.PORT) || 8080;
+  const host = '0.0.0.0';
+  return server.listen(port, host, () => {
+    console.log(`[Unova API] Running on http://${host}:${port}`);
+    if (typeof onListening === 'function') {
+      onListening();
+    }
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = { server, startServer };

@@ -4,13 +4,18 @@
 
 Dashboard access is Firebase-only.
 
+`jackhodgyuk@gmail.com` is locked as the founder account by default through `LOCKED_FOUNDER_EMAIL`.
+
 Give each Firebase user one of these custom claims:
 
 ```json
 { "unovaRole": "founder" }
 { "unovaRole": "owner" }
 { "unovaRole": "co_owner" }
-{ "unovaRole": "admin" }
+{ "unovaRole": "server_manager" }
+{ "unovaRole": "staff_manager" }
+{ "unovaRole": "senior_staff" }
+{ "unovaRole": "staff" }
 ```
 
 Optional but recommended for clean Discord mentions in tickets and dashboard action history:
@@ -110,16 +115,7 @@ unova-founder-dashboard-git-597032418775.europe-west1.run.app
 
 Create users in Firebase Authentication. The dashboard does not create users.
 
-Give dashboard access by adding their email to the right Cloud Run variable:
-
-```env
-DASHBOARD_FOUNDER_EMAILS=founder@example.com
-DASHBOARD_OWNER_EMAILS=
-DASHBOARD_CO_OWNER_EMAILS=
-DASHBOARD_ADMIN_EMAILS=
-```
-
-Comma-separate multiple emails. You can also set Firebase custom claims, for example:
+Give dashboard access with Firebase custom claims, for example:
 
 ```json
 {
@@ -127,6 +123,8 @@ Comma-separate multiple emails. You can also set Firebase custom claims, for exa
   "discordId": "681156025365299220"
 }
 ```
+
+Valid `unovaRole` values are `founder`, `owner`, `co_owner`, `server_manager`, `staff_manager`, `senior_staff`, and `staff`. The founder can assign these from the dashboard Settings page. The dashboard no longer assigns roles from Cloud Run email-list variables.
 
 The dashboard rejects signed-in users with no dashboard role from either email lists or custom claims.
 
@@ -272,7 +270,14 @@ The FiveM bridge calls Cloud Run while players connect:
 /fivem/priority/check?discordId=...
 ```
 
-Players see a Unova priority queue message during the Cfx deferral stage. The resource also includes a branded loadscreen.
+Players see a Unova priority queue message during the Cfx deferral stage. The resource does not include a loadscreen.
+
+Priority role rules and open-ticket state are saved to Google Cloud Storage. Set:
+
+```env
+UNOVA_STATE_BUCKET=your_state_bucket_name
+UNOVA_STATE_BUCKET_LOCATION=europe-west1
+```
 
 ## 11. Whitelist Management
 
@@ -295,4 +300,12 @@ or paste a Discord ID/mention in the whitelist channel.
 
 ## 12. Anti-Metagaming VC Rule
 
-If a member has `WHITELISTED_ROLE_ID` and their Discord ID is online i
+If a member has `WHITELISTED_ROLE_ID` and their Discord ID is online in FiveM, the bot disconnects them from server voice channels and DMs:
+
+```txt
+You cannot metagame meaning VC and city.
+This includes private VC calls.
+If you are found to be metagaming, you will receive an official warning.
+```
+
+Discord bots cannot see or disconnect users from private DM calls. This system enforces server voice channels and sends the warning text.

@@ -26,14 +26,21 @@ const statUpdated = document.getElementById('statUpdated');
 const actionsList = document.getElementById('actionsList');
 const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
+const ticketsView = document.getElementById('ticketsView');
 const priorityView = document.getElementById('priorityView');
 const settingsView = document.getElementById('settingsView');
 const settingsNavButton = document.getElementById('settingsNavButton');
 const founderSettingsPanel = document.getElementById('founderSettingsPanel');
+const founderCleanupPanel = document.getElementById('founderCleanupPanel');
+const firebaseUsersList = document.getElementById('firebaseUsersList');
+const firebaseUsersNotice = document.getElementById('firebaseUsersNotice');
 const priorityRoleForm = document.getElementById('priorityRoleForm');
 const priorityOverrideForm = document.getElementById('priorityOverrideForm');
 const priorityRulesList = document.getElementById('priorityRulesList');
 const priorityOverridesList = document.getElementById('priorityOverridesList');
+const ticketsNavButton = document.getElementById('ticketsNavButton');
+const ticketsList = document.getElementById('ticketsList');
+const displayNameInput = document.getElementById('displayName');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -60,28 +67,35 @@ function setLoginError(message) {
 }
 
 function formatRole(value) {
-  return String(value || 'admin')
+  return String(value || 'staff')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function roleRank(value) {
   return {
-    admin: 1,
-    co_owner: 2,
-    owner: 3,
-    founder: 4
+    staff: 1,
+    senior_staff: 2,
+    staff_manager: 3,
+    server_manager: 4,
+    co_owner: 5,
+    owner: 6,
+    founder: 7
   }[value] || 0;
 }
 
 function canManagePriority() {
-  return roleRank(dashboardUser?.role) >= roleRank('owner');
+  return roleRank(dashboardUser?.role) >= roleRank('founder');
+}
+
+function canViewTickets() {
+  return roleRank(dashboardUser?.role) >= roleRank('co_owner');
 }
 
 function describeFirebaseError(error) {
   const code = error?.code || 'unknown';
   const messages = {
-    'auth/invalid-email': 'Enter a valid Firebase email address.',
+    'auth/invalid-email': 'Enter a valid Firebase username.',
     'auth/invalid-credential': 'Email or password is wrong.',
     'auth/user-not-found': 'No Firebase user exists for that email.',
     'auth/wrong-password': 'Email or password is wrong.',
@@ -149,9 +163,13 @@ function renderStatus(data) {
   if (data.user) {
     dashboardUser = data.user;
     authLabel.textContent = dashboardUser.role
-      ? `${formatRole(dashboardUser.role)} Access`
+      ? `${dashboardUser.name ? `${dashboardUser.name} / ` : ''}${formatRole(dashboardUser.role)} Access`
       : 'Firebase Password Access';
     founderSettingsPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
+    founderCleanupPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
+    ticketsNavButton.classList.toggle('hidden', !canViewTickets());
+    if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
+    if (dashboardUser.role === 'founder') loadFirebaseUsers();
   }
 
   const fivem = data.fivem || {};
@@ -176,12 +194,13 @@ function renderStatus(data) {
 
   renderPlayers();
   renderActions(data.recentActions || []);
+  renderTickets(data.openTickets || []);
 }
 
 function renderPriority(data) {
   const rules = data.rules || [];
   const overrides = data.overrides || [];
-  const lockedMessage = canManagePriority() ? '' : '<small class="muted">Owner, co-owner, or founder required to edit.</small>';
+  const lockedMessage = canManagePriority() ? '' : '<small class="muted">Founder required to edit priority.</small>';
   priorityRoleForm.querySelectorAll('input, button').forEach((item) => {
     item.disabled = !canManagePriority();
   });
@@ -283,6 +302,74 @@ function renderActions(actions) {
   }
 }
 
+function renderTickets(tickets) {
+  ticketsList.innerHTML = '';
+
+  if (!canViewTickets()) {
+    ticketsList.innerHTML = '<div class="action-item muted"><span></span><span>Leadership access required.</span><span></span></div>';
+    return;
+  }
+
+  if (!tickets.length) {
+    ticketsList.innerHTML = '<div class="action-item muted"><span></span><span>No ongoing tickets.</span><span></span></div>';
+    return;
+  }
+
+  for (const ticket of tickets) {
+    const item = document.createElement('div');
+    item.className = 'action-item';
+    const link = ticket.guildId && ticket.channelId
+      ? `https://discord.com/channels/${ticket.guildId}/${ticket.channelId}`
+      : '#';
+    item.innerHTML = [
+      `<span class="badge">${escapeHtml(ticket.kind || 'ticket')}</span>`,
+      `<span><b>${escapeHtml(ticket.channelName || 'ticket')}</b> ${escapeHtml(ticket.targetName || ticket.openerName || '')}<small>${escapeHtml(ticket.level || '')} / ${escapeHtml(ticket.source || '')}</small></span>`,
+      `<span><a href="${link}" target="_blank" rel="noreferrer">Open</a></span>`
+    ].join('');
+    ticketsList.appendChild(item);
+  }
+}
+
+function roleOptions(selectedRole) {
+  const roles = ['', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder'];
+  return roles.map((role) => {
+    const label = role ? formatRole(role) : 'No Dashboard Access';
+    return `<option value="${role}"${role === selectedRole ? ' selected' : ''}>${label}</option>`;
+  }).join('');
+}
+
+function renderFirebaseUsers(users) {
+  firebaseUsersList.innerHTML = '';
+
+  if (!users.length) {
+    firebaseUsersList.innerHTML = '<div><span>No Firebase users found.</span><b>-</b></div>';
+    return;
+  }
+
+  for (const user of users) {
+    const item = document.createElement('div');
+    item.className = 'user-role-item';
+    item.innerHTML = [
+      `<span><b>${escapeHtml(user.name || 'Firebase user')}</b><small>${escapeHtml(user.email || 'No email')}</small></span>`,
+      `<select data-user-role="${escapeHtml(user.uid)}">${roleOptions(user.role || '')}</select>`,
+      `<button type="button" data-save-user-role="${escapeHtml(user.uid)}">Save</button>`
+    ].join('');
+    firebaseUsersList.appendChild(item);
+  }
+}
+
+async function loadFirebaseUsers() {
+  if (dashboardUser?.role !== 'founder' || !firebaseUsersList) return;
+  firebaseUsersNotice.textContent = '';
+  const response = await api('/dashboard/users').catch(() => null);
+  if (!response || !response.ok) {
+    firebaseUsersList.innerHTML = '<div><span>Could not load Firebase users.</span><b>-</b></div>';
+    return;
+  }
+  const data = await response.json();
+  renderFirebaseUsers(data.users || []);
+}
+
 function selectPlayer(player) {
   selectedPlayer = player;
   selectedName.textContent = player.name || 'Unknown';
@@ -334,8 +421,219 @@ loginForm.addEventListener('submit', async (event) => {
   const email = String(formData.get('email') || '').trim();
   const password = String(formData.get('password') || '');
   if (!email || !password) {
-    setLoginError('Email and password are required.');
+    setLoginError('Username and password are required.');
     return;
   }
 
-  setLo
+  setLoginError('');
+  firebaseLoginButton.disabled = true;
+  firebaseLoginButton.textContent = 'Checking...';
+
+  try {
+    const { signInWithEmailAndPassword } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+    const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+    const ok = await completeFirebaseLogin(credential.user);
+    if (ok) loginForm.reset();
+  } catch (error) {
+    setLoginError(describeFirebaseError(error));
+  } finally {
+    firebaseLoginButton.disabled = false;
+    firebaseLoginButton.textContent = 'Log In';
+  }
+});
+
+document.getElementById('logoutButton').addEventListener('click', () => {
+  localStorage.removeItem(tokenKey);
+  authToken = null;
+  dashboardUser = null;
+  if (firebaseAuth) {
+    firebaseAuth.signOut().catch(() => null);
+  }
+  setAuthState(false);
+});
+
+passwordForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!firebaseAuth?.currentUser) return;
+
+  const formData = new FormData(passwordForm);
+  const displayName = String(formData.get('displayName') || '').trim();
+  const currentPassword = String(formData.get('currentPassword') || '');
+  const newPassword = String(formData.get('newPassword') || '');
+  passwordNotice.textContent = '';
+
+  try {
+    const {
+      EmailAuthProvider,
+      reauthenticateWithCredential,
+      updateProfile,
+      updatePassword
+    } = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+    if (displayName && displayName !== firebaseAuth.currentUser.displayName) {
+      await updateProfile(firebaseAuth.currentUser, { displayName });
+    }
+    const credential = EmailAuthProvider.credential(firebaseAuth.currentUser.email, currentPassword);
+    await reauthenticateWithCredential(firebaseAuth.currentUser, credential);
+    await updatePassword(firebaseAuth.currentUser, newPassword);
+    await refreshFirebaseToken(true);
+    passwordForm.reset();
+    displayNameInput.value = displayName;
+    passwordNotice.textContent = 'Profile saved and password changed.';
+    await loadStatus();
+  } catch (error) {
+    passwordNotice.textContent = describeFirebaseError(error);
+  }
+});
+
+document.getElementById('refreshButton').addEventListener('click', loadStatus);
+
+document.querySelectorAll('.nav button').forEach((button) => {
+  button.addEventListener('click', () => {
+    document.querySelectorAll('.nav button').forEach((item) => item.classList.remove('active'));
+    button.classList.add('active');
+    const view = button.dataset.view;
+    playersView.classList.toggle('hidden', view !== 'players');
+    actionsView.classList.toggle('hidden', view !== 'actions');
+    ticketsView.classList.toggle('hidden', view !== 'tickets');
+    priorityView.classList.toggle('hidden', view !== 'priority');
+    settingsView.classList.toggle('hidden', view !== 'settings');
+    if (view === 'priority') loadPriority();
+  });
+});
+
+priorityRoleForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityRoleForm));
+  const response = await api('/dashboard/priority/rules', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityRoleForm.reset();
+    await loadPriority();
+  }
+});
+
+priorityOverrideForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManagePriority()) return;
+  const data = Object.fromEntries(new FormData(priorityOverrideForm));
+  const response = await api('/dashboard/priority/overrides', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  }).catch(() => null);
+  if (response?.ok) {
+    priorityOverrideForm.reset();
+    await loadPriority();
+  }
+});
+
+async function deletePriorityRule(roleId) {
+  await api('/dashboard/priority/rules/delete', {
+    method: 'POST',
+    body: JSON.stringify({ roleId })
+  }).catch(() => null);
+  await loadPriority();
+}
+
+async function deletePriorityOverride(discordId) {
+  await api('/dashboard/priority/overrides/delete', {
+    method: 'POST',
+    body: JSON.stringify({ discordId })
+  }).catch(() => null);
+  await loadPriority();
+}
+
+document.querySelectorAll('[data-action]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    if (!selectedPlayer) return;
+
+    const action = button.dataset.action;
+    const actionReason = reason.value.trim();
+    if (!actionReason) {
+      actionNotice.textContent = 'Reason is required.';
+      return;
+    }
+
+    actionNotice.textContent = `${action} submitted...`;
+    const response = await api(`/dashboard/moderation/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        playerId: selectedPlayer.id,
+        playerName: selectedPlayer.name,
+        discordId: selectedPlayer.discordId,
+        license: selectedPlayer.license,
+        reason: actionReason
+      })
+    }).catch(() => null);
+
+    if (!response || !response.ok) {
+      actionNotice.textContent = 'Action failed.';
+      return;
+    }
+
+    const data = await response.json();
+    actionNotice.textContent = data.ticket
+      ? `${action} sent. Ticket #${data.ticket.name} opened.`
+      : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
+    reason.value = '';
+    await loadStatus();
+  });
+});
+
+firebaseUsersList.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-save-user-role]');
+  if (!button || dashboardUser?.role !== 'founder') return;
+
+  const uid = button.dataset.saveUserRole;
+  const select = firebaseUsersList.querySelector(`[data-user-role="${CSS.escape(uid)}"]`);
+  if (!select) return;
+
+  firebaseUsersNotice.textContent = 'Saving Firebase role...';
+  button.disabled = true;
+  const response = await api('/dashboard/users/role', {
+    method: 'POST',
+    body: JSON.stringify({ uid, role: select.value })
+  }).catch(() => null);
+  button.disabled = false;
+
+  if (!response || !response.ok) {
+    const error = response ? await response.json().catch(() => ({})) : {};
+    firebaseUsersNotice.textContent = error.error || 'Could not save Firebase role.';
+    return;
+  }
+
+  firebaseUsersNotice.textContent = 'Firebase role saved. They may need to log out and back in.';
+  await loadFirebaseUsers();
+});
+
+async function setupFirebaseLogin() {
+  const response = await fetch('/dashboard/firebase-config').catch(() => null);
+  if (!response || !response.ok) return;
+
+  const { configured, config } = await response.json();
+  if (!configured) return;
+
+  try {
+    const [
+      { initializeApp },
+      { getAuth, onAuthStateChanged }
+    ] = await Promise.all([
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js'),
+      import('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js')
+    ]);
+    const app = initializeApp(config);
+    firebaseAuth = getAuth(app);
+
+    onAuthStateChanged(firebaseAuth, async (user) => {
+      if (!user || authToken) return;
+      await completeFirebaseLogin(user);
+    });
+  } catch (error) {
+    setLoginError(describeFirebaseError(error));
+  }
+}
+
+setupFirebaseLogin();
+setAuthState(Boolean(authToken));

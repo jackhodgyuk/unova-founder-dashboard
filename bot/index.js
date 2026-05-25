@@ -9,9 +9,12 @@ const {
   Events,
   GatewayIntentBits,
   MessageFlags,
+  ModalBuilder,
   PermissionFlagsBits,
   PermissionsBitField,
-  SlashCommandBuilder
+  SlashCommandBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 const axios = require('axios');
 
@@ -31,6 +34,7 @@ const whitelistedRoleId = process.env.WHITELISTED_ROLE_ID;
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
+const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
 const onlineFiveMDiscordIds = new Set();
 const vcDmCooldowns = new Map();
 
@@ -227,6 +231,111 @@ function isPrivilegedOverrideMember(member, userId) {
   return isFounderMember(member, userId) || memberHasAnyRole(member, privilegedOverrideRoleIds(member?.guild));
 }
 
+function leadershipRank(member, userId) {
+  if (isFounderMember(member, userId)) return 'founder';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'owner'))) return 'owner';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'co_owner'))) return 'co_owner';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'server_manager'))) return 'server_manager';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff_manager'))) return 'staff_manager';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'senior_staff'))) return 'senior_staff';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'head_developer'))) return 'head_developer';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'developer'))) return 'developer';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff'))) return 'staff';
+  return 'staff';
+}
+
+function protectedMentionRoleMap(guild) {
+  return [
+    ['staff', roleGroupIds(guild, 'staff')],
+    ['senior_staff', roleGroupIds(guild, 'senior_staff')],
+    ['staff_manager', roleGroupIds(guild, 'staff_manager')],
+    ['server_manager', roleGroupIds(guild, 'server_manager')],
+    ['co_owner', roleGroupIds(guild, 'co_owner')],
+    ['owner', roleGroupIds(guild, 'owner')],
+    ['founder', roleGroupIds(guild, 'founder')],
+    ['developer', roleGroupIds(guild, 'developer')],
+    ['head_developer', roleGroupIds(guild, 'head_developer')]
+  ];
+}
+
+function mentionRank(roleKey) {
+  return {
+    staff: 1,
+    developer: 1,
+    senior_staff: 2,
+    head_developer: 2,
+    staff_manager: 3,
+    server_manager: 4,
+    co_owner: 5,
+    owner: 6,
+    founder: 7
+  }[roleKey] || 0;
+}
+
+function memberMentionKey(member) {
+  if (!member) return null;
+  const guild = member.guild;
+  const protectedKeys = ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'head_developer', 'developer', 'staff'];
+  return protectedKeys.find((key) => {
+    if (key === 'founder' && isFounderMember(member, member.id)) return true;
+    return memberHasAnyRole(member, roleGroupIds(guild, key));
+  }) || null;
+}
+
+function memberMentionRank(member) {
+  return mentionRank(memberMentionKey(member));
+}
+
+function canMentionProtected(authorKey, targetKey) {
+  if (!targetKey) return true;
+  if (!authorKey) return false;
+  if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
+  return mentionRank(authorKey) >= mentionRank(targetKey);
+}
+
+function blockedProtectedMentions(message) {
+  const authorKey = memberMentionKey(message.member);
+  const blocked = [];
+  const mentionedRoleIds = new Set(message.mentions.roles.map((role) => role.id));
+  const mentionedUserIds = new Set(message.mentions.users.map((user) => user.id));
+
+  for (const [key, roleIds] of protectedMentionRoleMap(message.guild)) {
+    if (canMentionProtected(authorKey, key)) continue;
+
+    for (const roleId of roleIds) {
+      if (mentionedRoleIds.has(roleId)) blocked.push(`<@&${roleId}>`);
+    }
+  }
+
+  for (const member of message.mentions.members.values()) {
+    const targetKey = memberMentionKey(member);
+    if (targetKey && !canMentionProtected(authorKey, targetKey) && mentionedUserIds.has(member.id)) {
+      blocked.push(`<@${member.id}>`);
+    }
+  }
+
+  return blocked;
+}
+
+function isLeadershipLevel(kind, level) {
+  return ['leadership', 'founder', 'bug_owner', 'bug_founder'].includes(level)
+    || kind === 'management';
+}
+
+async function postDashboardInternal(path, body) {
+  if (!process.env.FIVEM_API_KEY) return null;
+  return axios.post(`${dashboardUrl}${path}`, body, {
+    headers: { 'x-api-key': process.env.FIVEM_API_KEY },
+    timeout: 5000
+  }).catch(() => null);
+}
+
+async function getOnlinePlayerByCityId(playerId) {
+  const response = await axios.get(`${dashboardUrl}/api/players`, { timeout: 5000 }).catch(() => null);
+  const players = response?.data?.players || [];
+  return players.find((player) => String(player.id) === String(playerId)) || null;
+}
+
 function memberHasRole(member, roleId) {
   if (!roleId || !member) return false;
 
@@ -387,12 +496,13 @@ function serializeTicketMeta(meta) {
     `kind=${meta.kind || 'support'}`,
     `level=${meta.level || 'staff'}`,
     `opener=${meta.opener || 'unknown'}`,
+    `openerRank=${meta.openerRank || 'staff'}`,
     `source=${meta.source || 'player'}`,
     `locked=${meta.locked === true || meta.locked === 'true' ? 'true' : 'false'}`
   ].join(' | ');
 }
 
-function buildSupportTicketOverwrites(guild, openerId, kind, level) {
+function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank = 'staff') {
   const botUserId = cleanId(configuredBotUserId) || client.user.id;
   const botRoleId = cleanId(configuredBotRoleId);
   const overwrites = [
@@ -410,8 +520,10 @@ function buildSupportTicketOverwrites(guild, openerId, kind, level) {
     overwrites.push({ id: roleId, allow: ticketAllow });
   }
 
+  const sensitive = isLeadershipLevel(kind, level) || ['founder', 'owner', 'co_owner'].includes(openerRank);
   for (const roleId of privilegedOverrideRoleIds(guild)) {
     const canTalk = level === 'leadership' || level === 'founder' || level === 'bug_owner' || level === 'bug_founder';
+    if (sensitive && !canTalk) continue;
     overwrites.push(canTalk
       ? { id: roleId, allow: ticketAllow }
       : { id: roleId, allow: ticketViewOnly, deny: ticketWriteDeny });
@@ -462,8 +574,43 @@ function ticketButtons(kind, locked) {
   return [row];
 }
 
+function playerReportModal() {
+  return new ModalBuilder()
+    .setCustomId('player_report_modal')
+    .setTitle('Player Report')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('offender_id')
+          .setLabel('Player ID in city')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('bodycam')
+          .setLabel('Bodycam link')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('details')
+          .setLabel('What happened?')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+      )
+    );
+}
+
 async function createPlayerTicket(guild, opener, kind) {
-  const initialLevel = kind === 'bug' ? 'developer' : 'staff';
+  const openerMember = await guild.members.fetch(opener.id).catch(() => null);
+  const openerRank = leadershipRank(openerMember, opener.id);
+  const initialLevel = openerRank === 'founder'
+    ? (kind === 'bug' ? 'bug_founder' : 'founder')
+    : ['owner', 'co_owner'].includes(openerRank)
+      ? (kind === 'bug' ? 'bug_owner' : 'leadership')
+      : (kind === 'bug' ? 'developer' : 'staff');
   const channelOptions = {
     name: makeTicketName(kind === 'bug' ? 'bug' : 'support', opener.id),
     type: ChannelType.GuildText,
@@ -471,10 +618,11 @@ async function createPlayerTicket(guild, opener, kind) {
       kind,
       level: initialLevel,
       opener: opener.id,
+      openerRank,
       source: 'player',
       locked: false
     }),
-    permissionOverwrites: buildSupportTicketOverwrites(guild, opener.id, kind, initialLevel)
+    permissionOverwrites: buildSupportTicketOverwrites(guild, opener.id, kind, initialLevel, openerRank)
   };
 
   const categoryId = await resolveTicketCategory(guild).catch((error) => {
@@ -495,8 +643,30 @@ async function createPlayerTicket(guild, opener, kind) {
       '',
       'Staff should be the first point of call. Use the buttons below when this needs moving up.'
     ].join('\n'),
+    embeds: [{
+      color: 2807784,
+      thumbnail: { url: unovaLogoUrl },
+      footer: { text: 'Unova Roleplay' }
+    }],
     components: ticketButtons(kind, false),
     allowedMentions: { parse: ['roles', 'users'] }
+  });
+  await postDashboardInternal('/internal/tickets/upsert', {
+    id: channel.id,
+    channelId: channel.id,
+    guildId: guild.id,
+    channelName: channel.name,
+    kind,
+    level: initialLevel,
+    openerId: opener.id,
+    openerName: opener.tag || opener.username,
+    source: 'discord-panel',
+    locked: false,
+    status: 'open'
+  });
+  await postDashboardInternal('/internal/city/notify', {
+    type: 'ticket',
+    message: `New ${kind === 'bug' ? 'bug report' : 'player report'} in Discord: ${channel.name}`
   });
   return channel;
 }
@@ -536,7 +706,7 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
   const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
   await channel.setTopic(serializeTicketMeta(nextMeta));
   await channel.permissionOverwrites.set(
-    buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel)
+    buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel, meta.openerRank)
   );
 
   const roleIds = ticketLevelRoleIds(channel.guild, nextKind, nextLevel);
@@ -630,6 +800,22 @@ async function createManagementTicket(guild, options) {
     '',
     'Use `/add` in this channel to add another Discord user.'
   ].join('\n'));
+
+  await postDashboardInternal('/internal/tickets/upsert', {
+    id: channel.id,
+    channelId: channel.id,
+    guildId: guild.id,
+    channelName: channel.name,
+    kind: 'management',
+    level: 'management',
+    openerId: options.openerId,
+    openerName: options.openerName,
+    targetId: targetUser && targetUser.id,
+    targetName: targetUser && targetUser.tag,
+    source: options.source || 'discord',
+    locked: true,
+    status: 'open'
+  });
 
   return channel;
 }
@@ -816,6 +1002,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
 
   await newState.disconnect('Whitelisted player is in FiveM city and cannot use Discord VC.').catch(() => null);
   await dmMetagamingWarning(member);
+  await logToStaff(`Metagaming VC blocked: <@${member.id}> was disconnected from <#${newState.channelId}> while active in city.`);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -825,6 +1012,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       const kind = interaction.customId === 'open_bug_ticket' ? 'bug' : 'support';
       const channel = await createPlayerTicket(interaction.guild, interaction.user, kind);
       return interaction.editReply(`Ticket opened: ${channel}`);
+    }
+
+    if (interaction.customId === 'open_player_report') {
+      return interaction.showModal(playerReportModal());
     }
 
     if (interaction.customId === 'ticket_escalate' || interaction.customId === 'ticket_bug_escalate') {
@@ -849,11 +1040,48 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({ content: 'You cannot close this ticket.', flags: MessageFlags.Ephemeral });
       }
       await interaction.reply({ content: 'Closing this ticket.', flags: MessageFlags.Ephemeral });
+      await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
       await interaction.channel.delete('Ticket closed.');
       return;
     }
 
     return;
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'player_report_modal') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const offenderId = interaction.fields.getTextInputValue('offender_id');
+    const bodycam = interaction.fields.getTextInputValue('bodycam');
+    const details = interaction.fields.getTextInputValue('details');
+    const offender = await getOnlinePlayerByCityId(offenderId);
+    const channel = await createPlayerTicket(interaction.guild, interaction.user, 'support');
+    await channel.send({
+      content: [
+        '**Player report details**',
+        `Reporter: <@${interaction.user.id}> (${interaction.user.id})`,
+        `Possible offender: ${offender?.name || 'unknown'} | City ID: ${offenderId}${offender?.discordId ? ` | <@${offender.discordId}>` : ''}`,
+        `Bodycam: ${bodycam}`,
+        '',
+        details
+      ].join('\n'),
+      allowedMentions: { parse: ['users'] }
+    });
+    await postDashboardInternal('/internal/tickets/upsert', {
+      id: channel.id,
+      channelId: channel.id,
+      guildId: interaction.guild.id,
+      channelName: channel.name,
+      kind: 'player_report',
+      level: 'staff',
+      openerId: interaction.user.id,
+      openerName: interaction.user.tag || interaction.user.username,
+      targetId: offender?.discordId,
+      targetName: offender?.name || `City ID ${offenderId}`,
+      source: 'discord-panel',
+      locked: false,
+      status: 'open'
+    });
+    return interaction.editReply(`Player report opened: ${channel}`);
   }
 
   if (!interaction.isChatInputCommand()) return;
@@ -873,7 +1101,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         targetUser: user,
         reason,
         label: 'ticket',
-        source: 'slash-command'
+        source: 'slash-command',
+        openerId: interaction.user.id,
+        openerName: interaction.user.tag
       });
       return interaction.editReply(`Ticket opened: ${channel}`);
     }
@@ -884,6 +1114,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({ content: 'Closing this management ticket.', flags: MessageFlags.Ephemeral });
+      await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
       await interaction.channel.delete('Management ticket closed.');
       return;
     }
@@ -905,12 +1136,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
           .setCustomId('open_bug_ticket')
           .setLabel('Bug Report')
           .setStyle(ButtonStyle.Secondary)
+        ,
+        new ButtonBuilder()
+          .setCustomId('open_player_report')
+          .setLabel('Player Report')
+          .setStyle(ButtonStyle.Success)
       );
       await interaction.channel.send({
         content: [
           '**Unova Support**',
-          'Open a support ticket for staff help, or send a bug report to the development team.'
+          'Open a support ticket, player report, or bug report.'
         ].join('\n'),
+        embeds: [{
+          color: 2807784,
+          thumbnail: { url: unovaLogoUrl },
+          footer: { text: 'Unova Roleplay' }
+        }],
         components: [row]
       });
       return interaction.reply({ content: 'Ticket panel posted.', flags: MessageFlags.Ephemeral });
@@ -980,6 +1221,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // Lightweight text-command fallback. Main moderation should come from the FiveM UI/API.
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot || !message.guild) return;
+
+  const blockedMentions = blockedProtectedMentions(message);
+  if (blockedMentions.length) {
+    await message.delete().catch(() => null);
+    await message.channel.send({
+      content: `${message.author}, you cannot tag protected staff roles or users above your level.`,
+      allowedMentions: { users: [message.author.id], roles: [] }
+    }).then((warning) => setTimeout(() => warning.delete().catch(() => null), 7000)).catch(() => null);
+    await logToStaff(`Protected mention blocked from <@${message.author.id}> in <#${message.channel.id}>: ${blockedMentions.join(', ')}`);
+    return;
+  }
 
   if (isWhitelistChannel(message.channel)) {
     if (!isManagementMember(message.member, message.author.id)) {

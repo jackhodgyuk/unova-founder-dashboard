@@ -11,6 +11,7 @@ body {
 }
 
 button,
+input,
 textarea {
   font: inherit;
 }
@@ -49,6 +50,19 @@ button {
   padding: 18px 20px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: #172238;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 .eyebrow {
@@ -126,6 +140,33 @@ h1 {
   font-weight: 500;
 }
 
+.tickets-panel {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 10px;
+}
+
+.ticket-list {
+  padding: 8px;
+}
+
+.ticket {
+  margin-bottom: 7px;
+  border: 1px solid rgba(41, 212, 232, 0.18);
+  border-radius: 6px;
+  background: #101b2c;
+  padding: 10px;
+}
+
+.ticket strong,
+.ticket small {
+  display: block;
+}
+
+.ticket small {
+  margin-top: 4px;
+  color: #c2cee2;
+}
+
 .details {
   padding: 20px;
 }
@@ -168,8 +209,10 @@ label {
   font-weight: 700;
 }
 
+input,
 textarea {
   width: 100%;
+  margin-bottom: 12px;
   resize: vertical;
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
@@ -179,6 +222,7 @@ textarea {
   outline: none;
 }
 
+input:focus,
 textarea:focus {
   border-color: #29d4e8;
 }
@@ -204,6 +248,14 @@ textarea:focus {
 
 .ban {
   background: #9d2235;
+}
+
+.report-submit {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
+  background: linear-gradient(135deg, #29d4e8, #2d7df0);
+  color: #06111d;
 }
 
 .notice {
