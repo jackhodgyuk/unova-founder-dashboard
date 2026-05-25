@@ -15,6 +15,10 @@ const selectedName = document.getElementById('selectedName');
 const selectedMeta = document.getElementById('selectedMeta');
 const reason = document.getElementById('reason');
 const actionNotice = document.getElementById('actionNotice');
+const spectatePanel = document.getElementById('spectatePanel');
+const spectateImage = document.getElementById('spectateImage');
+const spectateStatus = document.getElementById('spectateStatus');
+const stopSpectateButton = document.getElementById('stopSpectateButton');
 const serverName = document.getElementById('serverName');
 const serverCount = document.getElementById('serverCount');
 const serverUpdated = document.getElementById('serverUpdated');
@@ -46,6 +50,8 @@ let authToken = localStorage.getItem(tokenKey);
 let players = [];
 let selectedPlayer = null;
 let refreshTimer = null;
+let spectateTimer = null;
+let spectateSessionId = null;
 let firebaseAuth = null;
 let dashboardUser = null;
 
@@ -330,6 +336,60 @@ function renderTickets(tickets) {
   }
 }
 
+async function pollSpectateFrame() {
+  if (!spectateSessionId) return;
+  const response = await api(`/dashboard/spectate/${spectateSessionId}`).catch(() => null);
+  if (!response || !response.ok) {
+    spectateStatus.textContent = 'Spectate feed unavailable.';
+    return;
+  }
+
+  const data = await response.json();
+  const session = data.session || {};
+  if (session.image) {
+    spectateImage.src = session.image;
+    spectateStatus.textContent = `Viewing ${session.playerName || 'player'}${session.updatedAt ? ` | ${new Date(session.updatedAt).toLocaleTimeString()}` : ''}`;
+  } else if (session.error) {
+    spectateStatus.textContent = session.error;
+  } else {
+    spectateStatus.textContent = 'Waiting for screenshot feed.';
+  }
+}
+
+async function stopWebsiteSpectate() {
+  if (spectateTimer) clearInterval(spectateTimer);
+  spectateTimer = null;
+  if (spectateSessionId) {
+    await api(`/dashboard/spectate/${spectateSessionId}/stop`, { method: 'POST' }).catch(() => null);
+  }
+  spectateSessionId = null;
+  spectatePanel.classList.add('hidden');
+  spectateImage.removeAttribute('src');
+}
+
+async function startWebsiteSpectate(player) {
+  await stopWebsiteSpectate();
+  spectatePanel.classList.remove('hidden');
+  spectateStatus.textContent = 'Starting website spectate...';
+  const response = await api('/dashboard/spectate/start', {
+    method: 'POST',
+    body: JSON.stringify({
+      playerId: player.id,
+      playerName: player.name
+    })
+  }).catch(() => null);
+
+  if (!response || !response.ok) {
+    spectateStatus.textContent = 'Could not start website spectate.';
+    return;
+  }
+
+  const data = await response.json();
+  spectateSessionId = data.session?.id;
+  spectateTimer = setInterval(pollSpectateFrame, 1250);
+  await pollSpectateFrame();
+}
+
 function roleOptions(selectedRole) {
   const roles = ['', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder'];
   return roles.map((role) => {
@@ -351,6 +411,7 @@ function renderFirebaseUsers(users) {
     item.className = 'user-role-item';
     item.innerHTML = [
       `<span><b>${escapeHtml(user.name || 'Firebase user')}</b><small>${escapeHtml(user.email || 'No email')}</small></span>`,
+      `<input data-user-name="${escapeHtml(user.uid)}" type="text" value="${escapeHtml(user.name || '')}" placeholder="Dashboard name">`,
       `<select data-user-role="${escapeHtml(user.uid)}">${roleOptions(user.role || '')}</select>`,
       `<button type="button" data-save-user-role="${escapeHtml(user.uid)}">Save</button>`
     ].join('');
@@ -384,6 +445,7 @@ function clearSelection() {
   selectedPlayer = null;
   emptySelection.classList.remove('hidden');
   selectedPanel.classList.add('hidden');
+  stopWebsiteSpectate();
 }
 
 function escapeHtml(value) {
@@ -551,6 +613,13 @@ document.querySelectorAll('[data-action]').forEach((button) => {
 
     const action = button.dataset.action;
     const actionReason = reason.value.trim();
+    if (action === 'spectate') {
+      actionNotice.textContent = 'website spectate starting...';
+      await startWebsiteSpectate(selectedPlayer);
+      actionNotice.textContent = 'website spectate active.';
+      return;
+    }
+
     if (!actionReason && action !== 'revive' && action !== 'down' && action !== 'spectate') {
       actionNotice.textContent = 'Reason is required.';
       return;
@@ -591,19 +660,24 @@ document.querySelectorAll('[data-action]').forEach((button) => {
   });
 });
 
+stopSpectateButton.addEventListener('click', () => {
+  stopWebsiteSpectate();
+});
+
 firebaseUsersList.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-save-user-role]');
   if (!button || dashboardUser?.role !== 'founder') return;
 
   const uid = button.dataset.saveUserRole;
   const select = firebaseUsersList.querySelector(`[data-user-role="${CSS.escape(uid)}"]`);
+  const nameInput = firebaseUsersList.querySelector(`[data-user-name="${CSS.escape(uid)}"]`);
   if (!select) return;
 
-  firebaseUsersNotice.textContent = 'Saving Firebase role...';
+  firebaseUsersNotice.textContent = 'Saving Firebase user...';
   button.disabled = true;
   const response = await api('/dashboard/users/role', {
     method: 'POST',
-    body: JSON.stringify({ uid, role: select.value })
+    body: JSON.stringify({ uid, role: select.value, name: nameInput ? nameInput.value : undefined })
   }).catch(() => null);
   button.disabled = false;
 

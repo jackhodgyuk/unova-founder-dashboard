@@ -55,6 +55,7 @@ const ticketDenyView = '1024';
 const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
 const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state.json';
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
+const defaultDiscordLogChannelId = '1451550213595467889';
 const storage = new Storage();
 let firebaseAdminApp = null;
 
@@ -64,6 +65,7 @@ const state = {
   moderationQueue: [],
   cityNotifications: [],
   recentModerationActions: [],
+  spectateSessions: {},
   priorityRules: [],
   priorityOverrides: [],
   openTickets: [],
@@ -238,12 +240,12 @@ function sendFile(res, filePath) {
   });
 }
 
-function readBody(req) {
+function readBody(req, maxBytes = 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 1024 * 1024) {
+      if (body.length > maxBytes) {
         reject(new Error('Request body too large.'));
         req.destroy();
       }
@@ -856,6 +858,18 @@ function makeManagementMentionLine() {
   return 'Management role: not configured';
 }
 
+async function logDiscordAction(lines) {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const channelId = cleanId(process.env.DISCORD_LOG_CHANNEL_ID) || defaultDiscordLogChannelId;
+  if (!token || !channelId) return;
+  await postDiscord(token, `/channels/${channelId}/messages`, {
+    content: lines.filter(Boolean).join('\n').slice(0, 1900),
+    allowed_mentions: { parse: [] }
+  }).catch((error) => {
+    console.warn(`[Unova API] Discord log failed: ${error.response?.data?.message || error.message}`);
+  });
+}
+
 function normalizeOpenTicket(value) {
   if (!value || typeof value !== 'object') return null;
   const id = String(value.id || '').trim();
@@ -934,6 +948,27 @@ function normalizePriorityOverride(value) {
     discordId,
     label: String(value.label || 'Priority Override').trim().slice(0, 80),
     points
+  };
+}
+
+function cleanupSpectateSessions() {
+  const now = Date.now();
+  for (const [sessionId, session] of Object.entries(state.spectateSessions)) {
+    if (!session.active && now - session.updatedAtMs > 60 * 1000) delete state.spectateSessions[sessionId];
+    if (now - session.createdAtMs > 15 * 60 * 1000) delete state.spectateSessions[sessionId];
+  }
+}
+
+function publicSpectateSession(session) {
+  return {
+    id: session.id,
+    playerId: session.playerId,
+    playerName: session.playerName,
+    active: session.active,
+    pending: session.pending,
+    image: session.image || null,
+    error: session.error || null,
+    updatedAt: session.updatedAt || null
   };
 }
 
@@ -1268,6 +1303,18 @@ async function recordModerationAction(action, body, moderator, source) {
   const discordRoleUpdate = cityOnlyAction ? { skipped: moderationAction.action } : await applyDiscordBanRole(moderationAction);
   const ticket = cityOnlyAction ? null : await createDiscordModerationTicket(moderationAction);
   moderationAction.ticket = ticket;
+  await logDiscordAction([
+    `**FiveM ${moderationAction.action.toUpperCase()}**`,
+    `Source: ${moderationAction.source}`,
+    `Moderator: ${moderationAction.moderatorDiscordId ? `<@${moderationAction.moderatorDiscordId}> (${moderationAction.moderatorDiscordId})` : moderationAction.moderatorDisplayName}`,
+    `Moderator role: ${moderationAction.moderatorRole || 'unknown'}`,
+    `Target: ${moderationAction.discordId ? `<@${moderationAction.discordId}> (${moderationAction.discordId})` : 'Discord not linked'}`,
+    `FiveM: ${moderationAction.playerName || 'unknown'} / ID ${moderationAction.playerId || 'unknown'}`,
+    `License: ${moderationAction.license || 'unknown'}`,
+    `Reason: ${moderationAction.reason}`,
+    ticket ? `Ticket: #${ticket.name}` : null,
+    discordRoleUpdate?.ok ? `Discord roles: added ${discordRoleUpdate.addedRoleIds?.join(', ') || 'none'} removed ${discordRoleUpdate.removedRoleIds?.join(', ') || 'none'}` : null
+  ]);
   state.moderationQueue.push(moderationAction);
   state.recentModerationActions.unshift(moderationAction);
   state.recentModerationActions = state.recentModerationActions.slice(0, 50);
@@ -1446,6 +1493,45 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/fivem/spectate/requests') {
+    if (!requireFiveM(req, res)) return;
+
+    cleanupSpectateSessions();
+    const now = Date.now();
+    const requests = [];
+    for (const session of Object.values(state.spectateSessions)) {
+      if (!session.active || session.pending) continue;
+      session.pending = true;
+      session.requestedAtMs = now;
+      requests.push({
+        sessionId: session.id,
+        playerId: session.playerId,
+        playerName: session.playerName
+      });
+    }
+    sendJson(res, 200, { requests });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/fivem/spectate/frame') {
+    if (!requireFiveM(req, res)) return;
+
+    const body = await readBody(req, 12 * 1024 * 1024);
+    const session = state.spectateSessions[String(body.sessionId || '')];
+    if (!session) {
+      sendJson(res, 404, { error: 'Spectate session not found.' });
+      return;
+    }
+
+    session.pending = false;
+    session.error = body.error ? String(body.error).slice(0, 240) : null;
+    if (body.image) session.image = String(body.image);
+    session.updatedAtMs = Date.now();
+    session.updatedAt = new Date().toISOString();
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/fivem/reports') {
     if (!requireFiveM(req, res)) return;
     const body = await readBody(req);
@@ -1518,6 +1604,7 @@ async function handleRequest(req, res) {
     const body = await readBody(req);
     const uid = String(body.uid || '').trim();
     const role = normalizeDashboardRole(body.role);
+    const displayName = String(body.name || '').trim().slice(0, 80);
     const clearingRole = String(body.role || '').trim() === '';
     if (!uid || (!role && !clearingRole)) {
       sendJson(res, 400, { error: 'Valid Firebase UID and role are required.' });
@@ -1535,6 +1622,7 @@ async function handleRequest(req, res) {
         sendJson(res, 400, { error: `${lockedFounderEmail} is the locked founder account.` });
         return;
       }
+      if (displayName) await auth.updateUser(uid, { displayName });
       await auth.setCustomUserClaims(uid, dashboardClaimsWithRole(target.customClaims, role));
       const updated = await auth.getUser(uid);
       sendJson(res, 200, { ok: true, user: publicFirebaseUser(updated) });
@@ -1613,6 +1701,68 @@ async function handleRequest(req, res) {
       'dashboard'
     );
     sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/spectate/start') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const body = await readBody(req);
+    const playerId = Number(body.playerId);
+    if (!Number.isFinite(playerId)) {
+      sendJson(res, 400, { error: 'Valid playerId is required.' });
+      return;
+    }
+
+    cleanupSpectateSessions();
+    const now = Date.now();
+    const sessionId = crypto.randomUUID();
+    state.spectateSessions[sessionId] = {
+      id: sessionId,
+      playerId,
+      playerName: String(body.playerName || `ID ${playerId}`).slice(0, 80),
+      requesterUid: user.uid,
+      active: true,
+      pending: false,
+      image: null,
+      error: null,
+      createdAtMs: now,
+      updatedAtMs: now,
+      updatedAt: new Date(now).toISOString()
+    };
+    sendJson(res, 200, { ok: true, session: publicSpectateSession(state.spectateSessions[sessionId]) });
+    return;
+  }
+
+  const dashboardSpectateFrameMatch = pathname.match(/^\/dashboard\/spectate\/([^/]+)$/);
+  if (req.method === 'GET' && dashboardSpectateFrameMatch) {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    cleanupSpectateSessions();
+    const session = state.spectateSessions[dashboardSpectateFrameMatch[1]];
+    if (!session || session.requesterUid !== user.uid) {
+      sendJson(res, 404, { error: 'Spectate session not found.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, session: publicSpectateSession(session) });
+    return;
+  }
+
+  const dashboardSpectateStopMatch = pathname.match(/^\/dashboard\/spectate\/([^/]+)\/stop$/);
+  if (req.method === 'POST' && dashboardSpectateStopMatch) {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const session = state.spectateSessions[dashboardSpectateStopMatch[1]];
+    if (session && session.requesterUid === user.uid) {
+      session.active = false;
+      session.pending = false;
+      session.updatedAtMs = Date.now();
+      session.updatedAt = new Date().toISOString();
+    }
+    sendJson(res, 200, { ok: true });
     return;
   }
 

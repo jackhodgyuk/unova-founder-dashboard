@@ -558,7 +558,7 @@ button {
 
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 8px;
   margin: 13px 0;
 }
@@ -566,6 +566,8 @@ button {
 .action-grid button {
   min-height: 46px;
   border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .warn {
@@ -590,6 +592,49 @@ button {
 
 .spectate {
   background: linear-gradient(135deg, #57c4ff, #2563eb);
+}
+
+.spectate-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.spectate-panel.hidden {
+  display: none;
+}
+
+.spectate-panel div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.spectate-panel span {
+  font-weight: 900;
+}
+
+.spectate-panel button {
+  min-height: 34px;
+  padding: 0 12px;
+  background: #273344;
+}
+
+.spectate-panel img {
+  width: 100%;
+  min-height: 180px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #070b12;
+}
+
+.spectate-panel small {
+  color: var(--muted);
 }
 
 .actions-view {
@@ -707,7 +752,17 @@ button {
 }
 
 .user-role-list .user-role-item {
-  grid-template-columns: minmax(0, 1fr) minmax(170px, 230px) 84px;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) minmax(170px, 230px) 84px;
+}
+
+.user-role-item input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: #090d13;
+  outline: none;
+  padding: 11px;
 }
 
 .user-role-list span b {

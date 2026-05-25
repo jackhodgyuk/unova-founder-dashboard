@@ -10,6 +10,7 @@ const {
   GatewayIntentBits,
   MessageFlags,
   ModalBuilder,
+  Partials,
   PermissionFlagsBits,
   PermissionsBitField,
   SlashCommandBuilder,
@@ -39,6 +40,7 @@ const bronzePrioRoleId = process.env.BRONZE_PRIO_ROLE_ID || '1475501664080494593
 const silverPrioRoleId = process.env.SILVER_PRIO_ROLE_ID || '1481664036838965339';
 const goldPrioRoleId = process.env.GOLD_PRIO_ROLE_ID || '1481664094661644308';
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
+const defaultLogChannelId = '1451550213595467889';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
 const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
@@ -60,6 +62,12 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent
+  ],
+  partials: [
+    Partials.Message,
+    Partials.Channel,
+    Partials.GuildMember,
+    Partials.User
   ]
 });
 
@@ -314,9 +322,11 @@ function memberMentionRank(member) {
 function canMentionProtected(authorKey, targetKey) {
   if (!targetKey) return true;
   if (!authorKey) return false;
-  if (targetKey === 'founder') {
-    return ['developer', 'head_developer', 'server_manager', 'co_owner', 'owner', 'founder'].includes(authorKey);
-  }
+  if (authorKey === 'founder') return true;
+  if (['owner', 'co_owner'].includes(authorKey)) return true;
+  if (['developer', 'head_developer'].includes(authorKey)) return targetKey === 'founder' || ['developer', 'head_developer'].includes(targetKey);
+  if (authorKey === 'server_manager') return ['staff_manager', 'senior_staff', 'staff', 'founder'].includes(targetKey);
+  if (authorKey === 'staff_manager') return ['server_manager', 'senior_staff', 'staff'].includes(targetKey);
   if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
   return mentionRank(authorKey) >= mentionRank(targetKey);
 }
@@ -533,6 +543,7 @@ function serializeTicketMeta(meta) {
     `level=${meta.level || 'staff'}`,
     `opener=${meta.opener || 'unknown'}`,
     `openerRank=${meta.openerRank || 'staff'}`,
+    `claimed=${meta.claimed || 'none'}`,
     `source=${meta.source || 'player'}`,
     `locked=${meta.locked === true || meta.locked === 'true' ? 'true' : 'false'}`
   ].join(' | ');
@@ -814,6 +825,44 @@ function memberCanEscalateTicket(member, meta) {
   return memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level));
 }
 
+function ticketClaimLevelForMember(member, kind) {
+  if (!member) return null;
+  if (isFounderMember(member, member.id)) return kind === 'bug' ? 'bug_founder' : 'founder';
+  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'owner')) || memberHasAnyRole(member, roleGroupIds(member.guild, 'co_owner'))) {
+    return kind === 'bug' ? 'bug_owner' : 'leadership';
+  }
+  if (kind === 'bug' && memberHasAnyRole(member, cleanIdList(
+    roleGroupIds(member.guild, 'developer').join(','),
+    roleGroupIds(member.guild, 'head_developer').join(',')
+  ))) {
+    return 'developer';
+  }
+  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'server_manager'))) return 'server_manager';
+  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'staff_manager'))) return 'staff_manager';
+  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'senior_staff'))) return 'senior_staff';
+  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'staff'))) return 'staff';
+  return null;
+}
+
+async function claimTicketIfNeeded(message) {
+  const meta = parseTicketMeta(message.channel);
+  if (!meta || meta.kind === 'management' || (meta.claimed && meta.claimed !== 'none')) return;
+
+  const claimLevel = ticketClaimLevelForMember(message.member, meta.kind);
+  if (!claimLevel) return;
+
+  const nextMeta = { ...meta, level: claimLevel, claimed: message.author.id };
+  await message.channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null);
+  await message.channel.permissionOverwrites.set(
+    buildSupportTicketOverwrites(message.guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
+  ).catch(() => null);
+  await message.channel.send({
+    content: `Ticket claimed by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
+    allowedMentions: { users: [message.author.id], roles: [] }
+  }).catch(() => null);
+  await logToStaff(`Ticket claimed: <#${message.channel.id}> by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
+}
+
 async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.kind) {
   const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
   await channel.setTopic(serializeTicketMeta(nextMeta));
@@ -996,10 +1045,15 @@ async function registerSlashCommands(readyClient) {
 }
 
 async function logToStaff(message) {
-  const channelId = cleanId(process.env.DISCORD_LOG_CHANNEL_ID);
+  const channelId = cleanId(process.env.DISCORD_LOG_CHANNEL_ID) || defaultLogChannelId;
   if (!channelId) return;
   const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (channel) channel.send(message).catch(() => {});
+  if (channel) channel.send(String(message).slice(0, 1900)).catch(() => {});
+}
+
+function compactLogText(value, limit = 800) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit - 3)}...` : text || '[empty]';
 }
 
 function extractDiscordId(value) {
@@ -1506,6 +1560,8 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  await claimTicketIfNeeded(message);
+
   if (isWhitelistChannel(message.channel)) {
     if (!memberHasRoleGrantAccess(message.member, message.author.id)) {
       await message.reply('Staff and above only.').catch(() => null);
@@ -1573,7 +1629,13 @@ client.on(Events.MessageCreate, async (message) => {
       return message.reply('Bot missing Kick Members.');
     }
     await member.kick(reason);
-    await logToStaff(`Discord kick: <@${targetId}> | ${reason}`);
+    await logToStaff([
+      '**Discord Kick**',
+      `Actor: <@${message.author.id}> (${message.author.id})`,
+      `Target: <@${targetId}> (${targetId})`,
+      `Channel: <#${message.channel.id}>`,
+      `Reason: ${compactLogText(reason)}`
+    ].join('\n'));
     return message.reply('Kicked from Discord. Use the FiveM UI for city sync.');
   }
 
@@ -1587,9 +1649,42 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       return message.reply(`Role ban failed: ${error.message}`);
     }
-    await logToStaff(`Discord role ban: <@${targetId}> | ${reason}`);
+    await logToStaff([
+      '**Discord Role Ban**',
+      `Actor: <@${message.author.id}> (${message.author.id})`,
+      `Target: <@${targetId}> (${targetId})`,
+      `Channel: <#${message.channel.id}>`,
+      `Reason: ${compactLogText(reason)}`
+    ].join('\n'));
     return message.reply('Ban role applied and configured roles removed.');
   }
+});
+
+client.on(Events.MessageDelete, async (message) => {
+  if (message.partial) message = await message.fetch().catch(() => message);
+  if (!message.guild || message.author?.bot) return;
+  await logToStaff([
+    '**Message Deleted**',
+    `Author: ${message.author ? `<@${message.author.id}> (${message.author.id})` : 'unknown'}`,
+    `Channel: <#${message.channel.id}>`,
+    `Content: ${compactLogText(message.content)}`
+  ].join('\n'));
+});
+
+client.on(Events.MessageUpdate, async (oldMessage, newMessage) => {
+  if (oldMessage.partial) oldMessage = await oldMessage.fetch().catch(() => oldMessage);
+  if (newMessage.partial) newMessage = await newMessage.fetch().catch(() => newMessage);
+  if (!newMessage.guild || newMessage.author?.bot) return;
+  const before = oldMessage.content || '';
+  const after = newMessage.content || '';
+  if (before === after) return;
+  await logToStaff([
+    '**Message Edited**',
+    `Author: <@${newMessage.author.id}> (${newMessage.author.id})`,
+    `Channel: <#${newMessage.channel.id}>`,
+    `Before: ${compactLogText(before)}`,
+    `After: ${compactLogText(after)}`
+  ].join('\n'));
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN).catch((error) => {

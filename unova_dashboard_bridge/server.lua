@@ -18,6 +18,21 @@ local function apiUrl(path)
     return DASHBOARD_URL .. path
 end
 
+local function postSpectateFrame(sessionId, image, errorMessage)
+    PerformHttpRequest(apiUrl('/fivem/spectate/frame'), function(status, body, _, errorData)
+        if status ~= 200 then
+            print(('[Unova Dashboard] Spectate frame failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')))
+        end
+    end, 'POST', json.encode({
+        sessionId = sessionId,
+        image = image,
+        error = errorMessage
+    }), {
+        ['Content-Type'] = 'application/json',
+        ['x-api-key'] = API_KEY
+    })
+end
+
 local function urlEncode(value)
     return tostring(value or ''):gsub('([^%w%-_%.~])', function(char)
         return string.format('%%%02X', string.byte(char))
@@ -234,6 +249,72 @@ local function findPlayerByDiscordId(discordId)
         end
     end
     return nil
+end
+
+local function requestScreenshotFromResource(resourceName, target, cb)
+    return pcall(function()
+        exports[resourceName]:requestClientScreenshot(tonumber(target) or target, {
+            encoding = 'jpg',
+            quality = 0.55
+        }, function(first, second)
+            local errorMessage = nil
+            local image = nil
+
+            if second ~= nil then
+                errorMessage = first
+                image = second
+            else
+                image = first
+            end
+
+            if type(image) == 'string' and image ~= '' and not image:find('^data:') and not image:find('^https?://') then
+                image = 'data:image/jpeg;base64,' .. image
+            end
+
+            cb(errorMessage, image)
+        end)
+    end)
+end
+
+local function captureSpectateFrame(request)
+    local target = request.playerId and GetPlayerName(tostring(request.playerId)) and tostring(request.playerId) or nil
+    if not target then
+        postSpectateFrame(request.sessionId, nil, 'Target player is not online.')
+        return
+    end
+
+    local function done(errorMessage, image)
+        if errorMessage then
+            postSpectateFrame(request.sessionId, nil, tostring(errorMessage))
+            return
+        end
+        postSpectateFrame(request.sessionId, image, nil)
+    end
+
+    local ok = requestScreenshotFromResource('screenshot', target, done)
+    if ok then return end
+
+    ok = requestScreenshotFromResource('screenshot-basic', target, done)
+    if ok then return end
+
+    postSpectateFrame(request.sessionId, nil, 'No screenshot resource export found.')
+end
+
+local function pollSpectateRequests()
+    PerformHttpRequest(apiUrl('/fivem/spectate/requests'), function(status, body, _, errorData)
+        if status ~= 200 or not body then
+            if status ~= 200 then
+                logHttpFailure('Spectate requests', status, body, errorData)
+            end
+            return
+        end
+
+        local data = json.decode(body)
+        if not data or not data.requests then return end
+        for _, request in ipairs(data.requests) do
+            captureSpectateFrame(request)
+        end
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
 local function sendStatus()
@@ -673,5 +754,12 @@ CreateThread(function()
     while true do
         pollCityNotifications()
         Wait(5000)
+    end
+end)
+
+CreateThread(function()
+    while true do
+        pollSpectateRequests()
+        Wait(1200)
     end
 end)
