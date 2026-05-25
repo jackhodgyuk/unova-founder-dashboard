@@ -126,43 +126,43 @@ function roleGroupIds(guild, group) {
   const groups = {
     management: {
       ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
-      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES]
+      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES, 'Management', 'Unova Management']
     },
     staff: {
       ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
-      names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES]
+      names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES, 'Staff']
     },
     senior_staff: {
       ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS],
-      names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES]
+      names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES, 'Senior Staff']
     },
     staff_manager: {
       ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS],
-      names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES]
+      names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES, 'Staff Manager']
     },
     server_manager: {
       ids: [process.env.SERVER_MANAGER_ROLE_ID, process.env.SERVER_MANAGER_ROLE_IDS],
-      names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES]
+      names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES, 'Server Manager']
     },
     co_owner: {
       ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS],
-      names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES]
+      names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES, 'Co Owner', 'Co-Owner', 'Co Owner(s)', 'Co-Owners']
     },
     owner: {
       ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS],
-      names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES]
+      names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES, 'Owner', 'Owners']
     },
     founder: {
       ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS],
-      names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES]
+      names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES, 'Founder', 'Founders']
     },
     developer: {
       ids: [process.env.DEVELOPER_ROLE_ID, process.env.DEVELOPER_ROLE_IDS],
-      names: [process.env.DEVELOPER_ROLE_NAME, process.env.DEVELOPER_ROLE_NAMES]
+      names: [process.env.DEVELOPER_ROLE_NAME, process.env.DEVELOPER_ROLE_NAMES, 'Developer', 'Developers', 'Dev']
     },
     head_developer: {
       ids: [process.env.HEAD_DEVELOPER_ROLE_ID, process.env.HEAD_DEVELOPER_ROLE_IDS],
-      names: [process.env.HEAD_DEVELOPER_ROLE_NAME, process.env.HEAD_DEVELOPER_ROLE_NAMES]
+      names: [process.env.HEAD_DEVELOPER_ROLE_NAME, process.env.HEAD_DEVELOPER_ROLE_NAMES, 'Head Developer', 'Head Developers', 'Head Dev']
     }
   };
   const config = groups[group];
@@ -319,6 +319,14 @@ function canMentionProtected(authorKey, targetKey) {
   }
   if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
   return mentionRank(authorKey) >= mentionRank(targetKey);
+}
+
+function isMetagamingExempt(member) {
+  if (!member) return false;
+  return ['founder', 'owner', 'co_owner', 'developer', 'head_developer'].some((key) => {
+    if (key === 'founder' && isFounderMember(member, member.id)) return true;
+    return memberHasAnyRole(member, roleGroupIds(member.guild, key));
+  });
 }
 
 function blockedProtectedMentions(message) {
@@ -1148,6 +1156,7 @@ client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
   const member = newState.member;
   if (!member || member.user.bot) return;
   if (!memberHasRole(member, whitelistedRoleId)) return;
+  if (isMetagamingExempt(member)) return;
   if (!onlineFiveMDiscordIds.has(member.id)) return;
 
   await newState.disconnect('Whitelisted player is in FiveM city and cannot use Discord VC.').catch(() => null);

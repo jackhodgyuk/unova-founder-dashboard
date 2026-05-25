@@ -60,10 +60,9 @@ RegisterNetEvent('unova:admin:reviveFallback', function()
 end)
 
 RegisterNetEvent('unova:admin:makeDeadFallback', function()
-    local knocked = pcall(function()
+    pcall(function()
         exports['plt_ambulance_job']:manuallyKnockout(true)
     end)
-    if knocked then return end
 
     SetEntityHealth(PlayerPedId(), 0)
 end)
