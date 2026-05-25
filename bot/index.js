@@ -165,11 +165,11 @@ function roleGroupIds(guild, group) {
       names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES, 'Founder', 'Founders']
     },
     developer: {
-      ids: [process.env.DEVELOPER_ROLE_ID, process.env.DEVELOPER_ROLE_IDS],
+      ids: [process.env.DEVELOPER_ROLE_ID, process.env.DEVELOPER_ROLE_IDS, '1450751628956270644'],
       names: [process.env.DEVELOPER_ROLE_NAME, process.env.DEVELOPER_ROLE_NAMES, 'Developer', 'Developers', 'Dev']
     },
     head_developer: {
-      ids: [process.env.HEAD_DEVELOPER_ROLE_ID, process.env.HEAD_DEVELOPER_ROLE_IDS],
+      ids: [process.env.HEAD_DEVELOPER_ROLE_ID, process.env.HEAD_DEVELOPER_ROLE_IDS, '1450778341371281563'],
       names: [process.env.HEAD_DEVELOPER_ROLE_NAME, process.env.HEAD_DEVELOPER_ROLE_NAMES, 'Head Developer', 'Head Developers', 'Head Dev']
     }
   };
@@ -324,7 +324,8 @@ function canMentionProtected(authorKey, targetKey) {
   if (!authorKey) return false;
   if (authorKey === 'founder') return true;
   if (['owner', 'co_owner'].includes(authorKey)) return true;
-  if (['developer', 'head_developer'].includes(authorKey)) return targetKey === 'founder' || ['developer', 'head_developer'].includes(targetKey);
+  if (authorKey === 'head_developer') return ['founder', 'developer', 'head_developer'].includes(targetKey);
+  if (authorKey === 'developer') return ['developer', 'head_developer'].includes(targetKey);
   if (authorKey === 'server_manager') return ['staff_manager', 'senior_staff', 'staff', 'founder'].includes(targetKey);
   if (authorKey === 'staff_manager') return ['server_manager', 'senior_staff', 'staff'].includes(targetKey);
   if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
