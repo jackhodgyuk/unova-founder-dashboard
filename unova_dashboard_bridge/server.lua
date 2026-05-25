@@ -218,13 +218,22 @@ local function revivePlayer(target)
 end
 
 local function makePlayerDead(target)
-    local ok = pcall(function()
+    pcall(function()
         exports['plt_ambulance_job']:manuallyKnockout(tonumber(target), true)
     end)
-    if ok then return true end
 
     TriggerClientEvent('unova:admin:makeDeadFallback', target)
-    return false
+    return true
+end
+
+local function findPlayerByDiscordId(discordId)
+    if not discordId then return nil end
+    for _, playerId in ipairs(GetPlayers()) do
+        if getDiscordId(playerId) == tostring(discordId) then
+            return playerId
+        end
+    end
+    return nil
 end
 
 local function sendStatus()
@@ -297,6 +306,16 @@ local function pollModeration()
             elseif action.action == 'down' and target then
                 makePlayerDead(target)
                 notifyInEyes(target, 'Unova Medical', 'You have been marked down by management.')
+            elseif action.action == 'spectate' and target then
+                local moderator = findPlayerByDiscordId(action.moderatorDiscordId)
+                if moderator then
+                    TriggerClientEvent('unova:admin:startSpectate', moderator, {
+                        targetServerId = tonumber(target),
+                        targetName = action.playerName or GetPlayerName(target)
+                    })
+                else
+                    print('[Unova Dashboard] Spectate requested but moderator is not in city: ' .. tostring(action.moderatorDiscordId))
+                end
             end
         end
     end, 'GET', '', { ['x-api-key'] = API_KEY })
@@ -448,7 +467,7 @@ RegisterNetEvent('unova:admin:moderate', function(data)
         if not allowed then return end
 
         local action = tostring(data.action or '')
-        if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' and action ~= 'revive' and action ~= 'down' then
+        if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' and action ~= 'revive' and action ~= 'down' and action ~= 'spectate' then
             notifyAdmin(src, 'Invalid moderation action.', false)
             return
         end
@@ -461,7 +480,7 @@ RegisterNetEvent('unova:admin:moderate', function(data)
         end
 
         local reason = tostring(data.reason or '')
-        if reason == '' and action ~= 'revive' and action ~= 'down' then
+        if reason == '' and action ~= 'revive' and action ~= 'down' and action ~= 'spectate' then
             notifyAdmin(src, 'Reason is required.', false)
             return
         end
@@ -469,6 +488,8 @@ RegisterNetEvent('unova:admin:moderate', function(data)
             reason = 'Revive requested'
         elseif reason == '' and action == 'down' then
             reason = 'Marked dead by management'
+        elseif reason == '' and action == 'spectate' then
+            reason = 'Spectate requested'
         end
 
         local payload = {
@@ -486,6 +507,12 @@ RegisterNetEvent('unova:admin:moderate', function(data)
                     notifyAdmin(src, 'revive submitted.', true)
                 elseif action == 'down' then
                     notifyAdmin(src, 'make dead submitted.', true)
+                elseif action == 'spectate' then
+                    TriggerClientEvent('unova:admin:startSpectate', src, {
+                        targetServerId = targetInfo.id,
+                        targetName = targetInfo.name
+                    })
+                    notifyAdmin(src, 'spectate started.', true)
                 else
                     notifyAdmin(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
                 end

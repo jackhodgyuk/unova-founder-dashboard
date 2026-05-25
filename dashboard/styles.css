@@ -558,7 +558,7 @@ button {
 
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   margin: 13px 0;
 }
@@ -586,6 +586,10 @@ button {
 
 .down {
   background: linear-gradient(135deg, #8590a3, #465063);
+}
+
+.spectate {
+  background: linear-gradient(135deg, #57c4ff, #2563eb);
 }
 
 .actions-view {

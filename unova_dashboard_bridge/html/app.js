@@ -186,7 +186,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
 
     const action = button.dataset.action;
     const value = reason.value.trim();
-    if (!value && action !== 'revive' && action !== 'down') {
+    if (!value && action !== 'revive' && action !== 'down' && action !== 'spectate') {
       setNotice('Reason is required.', false);
       return;
     }
@@ -195,7 +195,10 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     postNui('moderate', {
       action,
       playerId: selectedPlayer.id,
-      reason: value || (action === 'revive' ? 'Revive requested' : 'Marked dead by management')
+      reason: value
+        || (action === 'revive' ? 'Revive requested'
+        : action === 'down' ? 'Marked dead by management'
+        : 'Spectate requested')
     });
   });
 });

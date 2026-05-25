@@ -596,7 +596,7 @@ function getStaffRoleIds() {
 }
 
 function cleanAction(value) {
-  return ['warn', 'kick', 'ban', 'revive', 'down'].includes(value) ? value : null;
+  return ['warn', 'kick', 'ban', 'revive', 'down', 'spectate'].includes(value) ? value : null;
 }
 
 function normalizeStatus(rowOrStatus) {
@@ -1183,8 +1183,10 @@ function normalizeModerator(moderator) {
   }
 
   const source = moderator || {};
+  const discordId = cleanId(source.discordId)
+    || (source.role === 'founder' ? cleanId(process.env.FOUNDER_DISCORD_ID) : null);
   return {
-    discordId: cleanId(source.discordId),
+    discordId,
     displayName: source.name || 'Dashboard user',
     role: source.role || null,
     firebaseUid: source.uid || source.firebaseUid || null,
@@ -1202,6 +1204,8 @@ async function recordModerationAction(action, body, moderator, source) {
     ? 'Revive requested'
     : cleanModerationAction === 'down'
     ? 'Marked dead by management'
+    : cleanModerationAction === 'spectate'
+    ? 'Spectate requested'
     : '';
   const reason = String(body.reason || defaultReason).trim();
   if (!reason) {
@@ -1233,7 +1237,7 @@ async function recordModerationAction(action, body, moderator, source) {
     createdAt: new Date().toISOString()
   };
 
-  if (moderationAction.action !== 'revive' && moderationAction.action !== 'down') {
+  if (moderationAction.action !== 'revive' && moderationAction.action !== 'down' && moderationAction.action !== 'spectate') {
     await safeQuery(
       'INSERT INTO punishments (action, discord_id, citizenid, license, reason, moderator_discord_id) VALUES (?, ?, ?, ?, ?, ?)',
       [
@@ -1260,7 +1264,7 @@ async function recordModerationAction(action, body, moderator, source) {
     );
   }
 
-  const cityOnlyAction = moderationAction.action === 'revive' || moderationAction.action === 'down';
+  const cityOnlyAction = moderationAction.action === 'revive' || moderationAction.action === 'down' || moderationAction.action === 'spectate';
   const discordRoleUpdate = cityOnlyAction ? { skipped: moderationAction.action } : await applyDiscordBanRole(moderationAction);
   const ticket = cityOnlyAction ? null : await createDiscordModerationTicket(moderationAction);
   moderationAction.ticket = ticket;
