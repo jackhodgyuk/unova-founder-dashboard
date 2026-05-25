@@ -1113,12 +1113,13 @@ async function createDiscordPlayerReportTicket(report) {
   const reporterDiscordId = cleanId(report.reporterDiscordId);
   const offenderDiscordId = cleanId(report.offenderDiscordId);
   const staffRoleIds = getStaffRoleIds();
+  const reportAccessRoleIds = staffRoleIds.length ? staffRoleIds : getTicketAccessRoleIds();
   const channelName = sanitizeChannelName(`report-${report.offenderPlayerId || 'unknown'}-${Date.now().toString().slice(-5)}`);
   const body = {
     name: channelName,
     type: 0,
     topic: `unova-support-ticket | kind=player_report | level=staff | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
-    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean), staffRoleIds)
+    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean), reportAccessRoleIds)
   };
 
   const categoryId = await resolveTicketCategoryId(token, guildId).catch(() => null);
@@ -1126,7 +1127,7 @@ async function createDiscordPlayerReportTicket(report) {
 
   try {
     const channel = await postDiscord(token, `/guilds/${guildId}/channels`, body);
-    const staffLine = makeRoleMentionLine(staffRoleIds, makeManagementMentionLine());
+    const staffLine = makeRoleMentionLine(reportAccessRoleIds, makeManagementMentionLine());
     await postDiscord(token, `/channels/${channel.id}/messages`, {
       content: [
         staffLine,

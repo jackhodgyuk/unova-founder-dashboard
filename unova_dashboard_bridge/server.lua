@@ -266,6 +266,11 @@ local function pollModeration()
                 DropPlayer(target, 'Kicked from Unova: ' .. reason)
             elseif action.action == 'ban' and target then
                 DropPlayer(target, 'Banned from Unova: ' .. reason)
+            elseif action.action == 'revive' and target then
+                local reviveEvent = GetConvar('unova_revive_event', 'hospital:client:Revive')
+                TriggerClientEvent(reviveEvent, target)
+                TriggerClientEvent('unova:admin:reviveFallback', target)
+                notifyInEyes(target, 'Unova Medical', 'You have been revived by management.')
             end
         end
     end, 'GET', '', { ['x-api-key'] = API_KEY })
@@ -413,7 +418,7 @@ RegisterNetEvent('unova:admin:moderate', function(data)
         if not allowed then return end
 
         local action = tostring(data.action or '')
-        if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' then
+        if action ~= 'warn' and action ~= 'kick' and action ~= 'ban' and action ~= 'revive' then
             notifyAdmin(src, 'Invalid moderation action.', false)
             return
         end
@@ -426,9 +431,12 @@ RegisterNetEvent('unova:admin:moderate', function(data)
         end
 
         local reason = tostring(data.reason or '')
-        if reason == '' then
+        if reason == '' and action ~= 'revive' then
             notifyAdmin(src, 'Reason is required.', false)
             return
+        end
+        if reason == '' then
+            reason = 'Revive requested'
         end
 
         local payload = {
@@ -442,7 +450,11 @@ RegisterNetEvent('unova:admin:moderate', function(data)
 
         PerformHttpRequest(apiUrl('/fivem/admin/moderation/' .. action), function(status, body, _, errorData)
             if status == 200 then
-                notifyAdmin(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
+                if action == 'revive' then
+                    notifyAdmin(src, 'revive submitted.', true)
+                else
+                    notifyAdmin(src, action .. ' submitted. Discord ticket opened if the bot has channel permissions.', true)
+                end
                 TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList())
                 return
             end

@@ -551,7 +551,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
 
     const action = button.dataset.action;
     const actionReason = reason.value.trim();
-    if (!actionReason) {
+    if (!actionReason && action !== 'revive') {
       actionNotice.textContent = 'Reason is required.';
       return;
     }
@@ -564,7 +564,7 @@ document.querySelectorAll('[data-action]').forEach((button) => {
         playerName: selectedPlayer.name,
         discordId: selectedPlayer.discordId,
         license: selectedPlayer.license,
-        reason: actionReason
+        reason: actionReason || 'Revive requested'
       })
     }).catch(() => null);
 
@@ -574,7 +574,9 @@ document.querySelectorAll('[data-action]').forEach((button) => {
     }
 
     const data = await response.json();
-    actionNotice.textContent = data.ticket
+    actionNotice.textContent = action === 'revive'
+      ? 'revive sent to the city.'
+      : data.ticket
       ? `${action} sent. Ticket #${data.ticket.name} opened.`
       : `${action} sent. Check bot permissions if no Discord ticket appeared.`;
     reason.value = '';

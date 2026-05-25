@@ -49,6 +49,15 @@ RegisterNetEvent('unova:admin:eyesNotice', function(payload)
     })
 end)
 
+RegisterNetEvent('unova:admin:reviveFallback', function()
+    local ped = PlayerPedId()
+    local coords = GetEntityCoords(ped)
+    NetworkResurrectLocalPlayer(coords.x, coords.y, coords.z, GetEntityHeading(ped), true, false)
+    ClearPedBloodDamage(ped)
+    ClearPedTasksImmediately(ped)
+    SetEntityHealth(ped, GetEntityMaxHealth(ped))
+end)
+
 RegisterNUICallback('close', function(_, cb)
     panelOpen = false
     SetNuiFocus(false, false)
