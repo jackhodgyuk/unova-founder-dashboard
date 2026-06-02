@@ -629,6 +629,13 @@ async function nextAvailableTicketLevel(guild, kind, currentLevel) {
   return nearestAvailableTicketLevel(guild, kind, levels, index + 1);
 }
 
+function previousTicketLevel(kind, currentLevel) {
+  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  const index = levels.indexOf(currentLevel);
+  if (index <= 0) return null;
+  return levels[index - 1];
+}
+
 async function initialTicketLevel(guild, kind, openerRank) {
   if (kind === 'bug') return nearestAvailableTicketLevel(guild, kind, bugTicketLevels, 0);
   const openerIndex = supportTicketLevels.indexOf(openerRank);
@@ -654,6 +661,10 @@ function ticketButtons(kind, locked) {
       .setCustomId(kind === 'bug' ? 'ticket_bug_escalate' : 'ticket_escalate')
       .setLabel('Escalate')
       .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(kind === 'bug' ? 'ticket_bug_deescalate' : 'ticket_deescalate')
+      .setLabel('De-escalate')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('ticket_override')
       .setLabel('Override')
@@ -946,6 +957,26 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
   const nextKind = forcedLevel === 'staff' ? 'support' : meta.kind;
   await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, nextKind);
   return interaction.editReply(`Escalated to ${ticketLevelLabels[nextLevel] || nextLevel}.`);
+}
+
+async function handleTicketDeescalation(interaction) {
+  const meta = parseTicketMeta(interaction.channel);
+  if (!meta || meta.kind === 'management') {
+    return interaction.reply({ content: 'This is not a de-escalatable player ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!memberCanEscalateTicket(interaction.member, meta)) {
+    return interaction.reply({ content: 'Your current role cannot de-escalate this ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  const previousLevel = previousTicketLevel(meta.kind, meta.level);
+  if (!previousLevel) {
+    return interaction.reply({ content: 'This ticket is already at the lowest level.', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await moveTicketLevel(interaction.channel, meta, previousLevel, interaction.user, meta.kind);
+  return interaction.editReply(`De-escalated to ${ticketLevelLabels[previousLevel] || previousLevel}.`);
 }
 
 async function handleTicketOverride(interaction) {
@@ -1316,6 +1347,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.customId === 'ticket_escalate' || interaction.customId === 'ticket_bug_escalate') {
       return handleTicketEscalation(interaction);
+    }
+
+    if (interaction.customId === 'ticket_deescalate' || interaction.customId === 'ticket_bug_deescalate') {
+      return handleTicketDeescalation(interaction);
     }
 
     if (interaction.customId === 'ticket_bug_to_staff') {
