@@ -35,6 +35,18 @@
 
         <section class="details">
           <div id="empty" class="empty">Select a player to warn, kick, or ban.</div>
+          <section id="ticketReader" class="ticket-reader hidden">
+            <div class="player-card">
+              <span id="ticketTitle">Ticket</span>
+              <small id="ticketMeta">Discord ticket</small>
+            </div>
+            <div id="ticketMessages" class="ticket-messages"></div>
+            <form id="ticketReplyForm" class="ticket-reply">
+              <textarea id="ticketReply" rows="3" placeholder="Reply to this Discord ticket from city"></textarea>
+              <button type="submit">Send Reply</button>
+            </form>
+            <p id="ticketNotice" class="notice"></p>
+          </section>
           <div id="moderation" class="moderation hidden">
             <div class="player-card">
               <span id="playerName"></span>

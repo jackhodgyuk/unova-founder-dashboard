@@ -175,6 +175,47 @@ local function fetchTickets(cb)
     end, 'GET', '', { ['x-api-key'] = API_KEY })
 end
 
+local function fetchTicketMessages(src, channelId, cb)
+    local discordId = getDiscordId(src)
+    if not discordId then
+        cb(nil, 'Your Discord is not linked in FiveM.')
+        return
+    end
+
+    PerformHttpRequest(apiUrl('/fivem/tickets/' .. urlEncode(channelId) .. '/messages?discordId=' .. urlEncode(discordId)), function(status, body, _, errorData)
+        if status ~= 200 or not body then
+            cb(nil, ('Ticket read failed: %s %s'):format(tostring(status), tostring(errorData or body or '')))
+            return
+        end
+
+        cb(json.decode(body), nil)
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
+end
+
+local function sendTicketMessage(src, channelId, message, cb)
+    local discordId = getDiscordId(src)
+    if not discordId then
+        cb(nil, 'Your Discord is not linked in FiveM.')
+        return
+    end
+
+    PerformHttpRequest(apiUrl('/fivem/tickets/' .. urlEncode(channelId) .. '/messages'), function(status, body, _, errorData)
+        if status ~= 200 or not body then
+            cb(nil, ('Ticket reply failed: %s %s'):format(tostring(status), tostring(errorData or body or '')))
+            return
+        end
+
+        cb(json.decode(body), nil)
+    end, 'POST', json.encode({
+        discordId = discordId,
+        authorName = GetPlayerName(src) or ('ID ' .. tostring(src)),
+        message = tostring(message or '')
+    }), {
+        ['Content-Type'] = 'application/json',
+        ['x-api-key'] = API_KEY
+    })
+end
+
 local function getPlayerInfo(playerId)
     local player = tostring(playerId)
     local name = GetPlayerName(player)
@@ -441,14 +482,8 @@ local function openAdminPanel(src)
             return
         end
 
-        checkLeadershipAccess(src, function(leadership)
-            if leadership then
-                fetchTickets(function(tickets)
-                    TriggerClientEvent('unova:admin:openPanel', src, getPlayerList(), tickets)
-                end)
-            else
-                TriggerClientEvent('unova:admin:openPanel', src, getPlayerList(), {})
-            end
+        fetchTickets(function(tickets)
+            TriggerClientEvent('unova:admin:openPanel', src, getPlayerList(), tickets)
         end)
     end)
 end
@@ -528,14 +563,51 @@ RegisterNetEvent('unova:admin:refreshPlayers', function()
     local src = source
     checkAdminAccess(src, function(allowed)
         if not allowed then return end
-        checkLeadershipAccess(src, function(leadership)
-            if leadership then
-                fetchTickets(function(tickets)
-                    TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList(), tickets)
-                end)
-            else
-                TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList(), {})
+        fetchTickets(function(tickets)
+            TriggerClientEvent('unova:admin:updatePlayers', src, getPlayerList(), tickets)
+        end)
+    end)
+end)
+
+RegisterNetEvent('unova:ticket:open', function(data)
+    local src = source
+    if type(data) ~= 'table' then return end
+
+    checkAdminAccess(src, function(allowed)
+        if not allowed then return end
+
+        fetchTicketMessages(src, tostring(data.channelId or ''), function(result, errorMessage)
+            if errorMessage then
+                notifyAdmin(src, errorMessage, false)
+                return
             end
+
+            TriggerClientEvent('unova:ticket:messages', src, result)
+        end)
+    end)
+end)
+
+RegisterNetEvent('unova:ticket:reply', function(data)
+    local src = source
+    if type(data) ~= 'table' then return end
+
+    checkAdminAccess(src, function(allowed)
+        if not allowed then return end
+
+        sendTicketMessage(src, tostring(data.channelId or ''), tostring(data.message or ''), function(result, errorMessage)
+            if errorMessage then
+                notifyAdmin(src, errorMessage, false)
+                return
+            end
+
+            fetchTicketMessages(src, tostring(data.channelId or ''), function(messagesResult, messagesError)
+                if messagesError then
+                    notifyAdmin(src, messagesError, false)
+                    return
+                end
+
+                TriggerClientEvent('unova:ticket:messages', src, messagesResult)
+            end)
         end)
     end)
 end)

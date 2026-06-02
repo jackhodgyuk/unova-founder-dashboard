@@ -54,6 +54,15 @@ RegisterNetEvent('unova:admin:notice', function(payload)
     })
 end)
 
+RegisterNetEvent('unova:ticket:messages', function(payload)
+    SendNUIMessage({
+        type = 'ticketMessages',
+        ticket = payload and payload.ticket or nil,
+        messages = payload and payload.messages or {},
+        canSend = payload and payload.canSend == true
+    })
+end)
+
 RegisterNetEvent('unova:admin:eyesNotice', function(payload)
     showToast(payload.title or 'Unova', payload.message or '')
 end)
@@ -150,6 +159,16 @@ end)
 
 RegisterNUICallback('report', function(data, cb)
     TriggerServerEvent('unova:report:submit', data)
+    cb({ ok = true })
+end)
+
+RegisterNUICallback('openTicket', function(data, cb)
+    TriggerServerEvent('unova:ticket:open', data)
+    cb({ ok = true })
+end)
+
+RegisterNUICallback('replyTicket', function(data, cb)
+    TriggerServerEvent('unova:ticket:reply', data)
     cb({ ok = true })
 end)
 

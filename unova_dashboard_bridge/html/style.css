@@ -212,6 +212,12 @@ h1 {
   padding: 10px;
 }
 
+.ticket.active,
+.ticket:hover {
+  border-color: rgba(41, 212, 232, 0.55);
+  background: #14243b;
+}
+
 .ticket strong,
 .ticket small {
   display: block;
@@ -220,6 +226,13 @@ h1 {
 .ticket small {
   margin-top: 4px;
   color: #c2cee2;
+}
+
+.ticket button {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  background: #263a5e;
 }
 
 .details {
@@ -255,6 +268,88 @@ h1 {
 .player-card small {
   margin-top: 6px;
   color: #c2cee2;
+}
+
+.ticket-reader {
+  display: grid;
+  gap: 12px;
+}
+
+.ticket-reader.hidden {
+  display: none;
+}
+
+.ticket-messages {
+  display: grid;
+  max-height: 315px;
+  overflow-y: auto;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: #0b111d;
+}
+
+.ticket-message {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: #172238;
+}
+
+.ticket-message.bot {
+  border-color: rgba(41, 212, 232, 0.25);
+}
+
+.ticket-message.muted {
+  color: #96a9c8;
+}
+
+.ticket-message strong,
+.ticket-message small,
+.ticket-message p {
+  display: block;
+}
+
+.ticket-message strong {
+  color: #f4f7fb;
+}
+
+.ticket-message small {
+  margin-top: 3px;
+  color: #96a9c8;
+  font-weight: 500;
+}
+
+.ticket-message p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #d7e1ef;
+  line-height: 1.35;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.attachments a {
+  color: #29d4e8;
+}
+
+.ticket-reply button {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, #26c6da, #2f80ed);
+}
+
+.ticket-reply button:disabled,
+.ticket-reply textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 label {

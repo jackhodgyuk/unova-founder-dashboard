@@ -41,6 +41,7 @@ const silverPrioRoleId = process.env.SILVER_PRIO_ROLE_ID || '1481664036838965339
 const goldPrioRoleId = process.env.GOLD_PRIO_ROLE_ID || '1481664094661644308';
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const defaultLogChannelId = '1451550213595467889';
+const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID || '1450604376505974897';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
 const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
@@ -87,17 +88,21 @@ const ticketWriteDeny = [
   PermissionFlagsBits.AttachFiles,
   PermissionFlagsBits.EmbedLinks
 ];
-const supportTicketLevels = ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'leadership', 'founder'];
+const rankOrder = ['whitelisted', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
+const protectedRankOrder = ['founder', 'owner', 'co_owner', 'head_developer', 'developer', 'server_manager', 'staff_manager', 'senior_staff', 'staff', 'whitelisted'];
+const supportTicketLevels = ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
+const bugTicketLevels = ['developer', 'head_developer', 'co_owner', 'owner', 'founder'];
 const ticketLevelLabels = {
+  whitelisted: 'Whitelisted',
   staff: 'Staff',
   senior_staff: 'Senior Staff',
   staff_manager: 'Staff Manager',
   server_manager: 'Server Manager',
-  leadership: 'Co-Owners / Owners',
-  founder: 'Founder',
   developer: 'Developers',
-  bug_owner: 'Owners / Co-Owners',
-  bug_founder: 'Founder'
+  head_developer: 'Head Developers',
+  co_owner: 'Co-Owners',
+  owner: 'Owners',
+  founder: 'Founder',
 };
 
 function cleanId(value) {
@@ -135,6 +140,10 @@ function roleGroupIds(guild, group) {
     management: {
       ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
       names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES, 'Management', 'Unova Management']
+    },
+    whitelisted: {
+      ids: [process.env.WHITELISTED_ROLE_ID, process.env.WHITELISTED_ROLE_IDS],
+      names: [process.env.WHITELISTED_ROLE_NAME, process.env.WHITELISTED_ROLE_NAMES, 'Whitelisted', 'Allowlisted']
     },
     staff: {
       ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
@@ -268,13 +277,14 @@ function leadershipRank(member, userId) {
   if (isFounderMember(member, userId)) return 'founder';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'owner'))) return 'owner';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'co_owner'))) return 'co_owner';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'head_developer'))) return 'head_developer';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'developer'))) return 'developer';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'server_manager'))) return 'server_manager';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff_manager'))) return 'staff_manager';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'senior_staff'))) return 'senior_staff';
-  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'head_developer'))) return 'head_developer';
-  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'developer'))) return 'developer';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff'))) return 'staff';
-  return 'staff';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'whitelisted'))) return 'whitelisted';
+  return 'player';
 }
 
 function protectedMentionRoleMap(guild) {
@@ -291,45 +301,47 @@ function protectedMentionRoleMap(guild) {
   ];
 }
 
-function mentionRank(roleKey) {
-  return {
-    staff: 1,
-    developer: 1,
-    senior_staff: 2,
-    head_developer: 2,
-    staff_manager: 3,
-    server_manager: 4,
-    co_owner: 5,
-    owner: 6,
-    founder: 7
-  }[roleKey] || 0;
+function rankValue(roleKey) {
+  return rankOrder.indexOf(roleKey);
+}
+
+function isRankAbove(authorKey, targetKey) {
+  return rankValue(authorKey) > rankValue(targetKey);
 }
 
 function memberMentionKey(member) {
   if (!member) return null;
   const guild = member.guild;
-  const protectedKeys = ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'head_developer', 'developer', 'staff'];
-  return protectedKeys.find((key) => {
+  return protectedRankOrder.find((key) => {
     if (key === 'founder' && isFounderMember(member, member.id)) return true;
     return memberHasAnyRole(member, roleGroupIds(guild, key));
   }) || null;
 }
 
 function memberMentionRank(member) {
-  return mentionRank(memberMentionKey(member));
+  return rankValue(memberMentionKey(member));
 }
 
 function canMentionProtected(authorKey, targetKey) {
   if (!targetKey) return true;
   if (!authorKey) return false;
   if (authorKey === 'founder') return true;
-  if (['owner', 'co_owner'].includes(authorKey)) return true;
-  if (authorKey === 'head_developer') return ['founder', 'owner', 'developer', 'head_developer'].includes(targetKey);
-  if (authorKey === 'developer') return ['developer', 'head_developer'].includes(targetKey);
-  if (authorKey === 'server_manager') return ['staff_manager', 'senior_staff', 'staff', 'founder'].includes(targetKey);
-  if (authorKey === 'staff_manager') return ['server_manager', 'senior_staff', 'staff'].includes(targetKey);
-  if (authorKey === 'staff' && targetKey === 'senior_staff') return true;
-  return mentionRank(authorKey) >= mentionRank(targetKey);
+
+  const upwardAllows = {
+    owner: ['founder'],
+    co_owner: ['owner', 'founder'],
+    head_developer: ['co_owner', 'owner', 'founder'],
+    developer: ['head_developer', 'co_owner', 'owner'],
+    server_manager: ['developer', 'head_developer', 'co_owner', 'owner'],
+    staff_manager: ['server_manager', 'developer', 'head_developer', 'co_owner', 'owner'],
+    senior_staff: ['staff_manager', 'developer', 'server_manager'],
+    staff: ['senior_staff', 'staff_manager'],
+    whitelisted: []
+  };
+
+  return authorKey === targetKey
+    || isRankAbove(authorKey, targetKey)
+    || (upwardAllows[authorKey] || []).includes(targetKey);
 }
 
 function isMetagamingExempt(member) {
@@ -356,17 +368,12 @@ function blockedProtectedMentions(message) {
 
   for (const member of message.mentions.members.values()) {
     const targetKey = memberMentionKey(member);
-    if (targetKey && !canMentionProtected(authorKey, targetKey) && mentionedUserIds.has(member.id)) {
+    if (targetKey && targetKey !== 'whitelisted' && !canMentionProtected(authorKey, targetKey) && mentionedUserIds.has(member.id)) {
       blocked.push(`<@${member.id}>`);
     }
   }
 
   return blocked;
-}
-
-function isLeadershipLevel(kind, level) {
-  return ['leadership', 'founder', 'bug_owner', 'bug_founder'].includes(level)
-    || kind === 'management';
 }
 
 async function postDashboardInternal(path, body) {
@@ -397,9 +404,23 @@ function memberHasRole(member, roleId) {
   return false;
 }
 
-function makeTicketName(label, userId) {
-  const suffix = userId ? userId.slice(-6) : Date.now().toString().slice(-6);
-  return `management-${label}-${suffix}`.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 90);
+function channelSafeName(value, fallback = 'ticket') {
+  const cleaned = String(value || fallback)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return (cleaned || fallback).slice(0, 42);
+}
+
+function makeTicketName(label, userOrName) {
+  const name = typeof userOrName === 'string' && !/^\d{15,25}$/.test(userOrName)
+    ? userOrName
+    : (userOrName ? String(userOrName).slice(-6) : Date.now().toString().slice(-6));
+  return `${channelSafeName(label)}-${channelSafeName(name)}`.slice(0, 90);
+}
+
+function makeClaimedTicketName(openerName, staffName) {
+  return `${channelSafeName(openerName)}-claimed-attention-${channelSafeName(staffName)}`.slice(0, 90);
 }
 
 function uniqueOverwrites(overwrites) {
@@ -503,22 +524,10 @@ function makeManagementMentionLine(guild) {
 }
 
 function ticketLevelRoleIds(guild, kind, level) {
-  if (kind === 'bug') {
-    if (level === 'developer') {
-      return cleanIdList(
-        roleGroupIds(guild, 'developer').join(','),
-        roleGroupIds(guild, 'head_developer').join(',')
-      );
-    }
-    if (level === 'bug_owner') {
-      return leadershipRoleIds(guild);
-    }
-    if (level === 'bug_founder') {
-      return roleGroupIds(guild, 'founder');
-    }
+  if (kind === 'bug' && level === 'developer') {
+    return roleGroupIds(guild, 'developer');
   }
 
-  if (level === 'leadership') return leadershipRoleIds(guild);
   return roleGroupIds(guild, level);
 }
 
@@ -553,6 +562,7 @@ function serializeTicketMeta(meta) {
 function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank = 'staff') {
   const botUserId = cleanId(configuredBotUserId) || client.user.id;
   const botRoleId = cleanId(configuredBotRoleId);
+  const ticketLevel = kind === 'bug' && level === 'developer' ? 'developer' : level;
   const overwrites = [
     {
       id: guild.roles.everyone.id,
@@ -564,17 +574,17 @@ function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank =
     overwrites.push({ id: openerId, allow: ticketAllow });
   }
 
-  for (const roleId of ticketLevelRoleIds(guild, kind, level)) {
+  for (const roleId of ticketLevelRoleIds(guild, kind, ticketLevel)) {
     overwrites.push({ id: roleId, allow: ticketAllow });
   }
 
-  const sensitive = isLeadershipLevel(kind, level) || ['founder', 'owner', 'co_owner'].includes(openerRank);
-  for (const roleId of privilegedOverrideRoleIds(guild)) {
-    const canTalk = level === 'leadership' || level === 'founder' || level === 'bug_owner' || level === 'bug_founder';
-    if (sensitive && !canTalk) continue;
-    overwrites.push(canTalk
-      ? { id: roleId, allow: ticketAllow }
-      : { id: roleId, allow: ticketViewOnly, deny: ticketWriteDeny });
+  for (const key of ['owner', 'founder']) {
+    for (const roleId of roleGroupIds(guild, key)) {
+      const canTalk = ticketLevel === key;
+      overwrites.push(canTalk
+        ? { id: roleId, allow: ticketAllow }
+        : { id: roleId, allow: ticketViewOnly, deny: ticketWriteDeny });
+    }
   }
 
   if (botRoleId) overwrites.push({ id: botRoleId, allow: ticketAllow });
@@ -592,6 +602,50 @@ async function onlineStaffMentions(guild, roleIds) {
 
   if (mentions.length) return mentions.join(' ');
   return roleIds.map((roleId) => `<@&${roleId}>`).join(' ');
+}
+
+async function roleIdsHaveMembers(guild, roleIds) {
+  const cleanRoleIds = cleanIdList(roleIds.join(','));
+  if (!cleanRoleIds.length) return false;
+  await guild.members.fetch().catch(() => null);
+  return cleanRoleIds.some((roleId) => {
+    const role = guild.roles.cache.get(roleId);
+    return role && role.members.size > 0;
+  });
+}
+
+async function nearestAvailableTicketLevel(guild, kind, levels, preferredIndex) {
+  for (let index = preferredIndex; index < levels.length; index += 1) {
+    const level = levels[index];
+    if (await roleIdsHaveMembers(guild, ticketLevelRoleIds(guild, kind, level))) return level;
+  }
+  return levels[levels.length - 1] || null;
+}
+
+async function nextAvailableTicketLevel(guild, kind, currentLevel) {
+  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  const index = levels.indexOf(currentLevel);
+  if (index === -1 || index >= levels.length - 1) return null;
+  return nearestAvailableTicketLevel(guild, kind, levels, index + 1);
+}
+
+async function initialTicketLevel(guild, kind, openerRank) {
+  if (kind === 'bug') return nearestAvailableTicketLevel(guild, kind, bugTicketLevels, 0);
+  const openerIndex = supportTicketLevels.indexOf(openerRank);
+  const preferredIndex = openerIndex >= 0 ? openerIndex + 1 : 0;
+  return nearestAvailableTicketLevel(guild, kind, supportTicketLevels, preferredIndex);
+}
+
+function ticketStatusEmbed(kind, level, claimedBy = null) {
+  return {
+    color: 2807784,
+    thumbnail: { url: unovaLogoUrl },
+    fields: [
+      { name: 'Ticket Level', value: ticketLevelLabels[level] || level || 'Unknown', inline: true },
+      { name: 'Claimed By', value: claimedBy ? `<@${claimedBy}>` : 'Not claimed', inline: true }
+    ],
+    footer: { text: kind === 'bug' ? 'Unova Bug Report' : 'Unova Support' }
+  };
 }
 
 function ticketButtons(kind, locked) {
@@ -730,13 +784,10 @@ function roleGrantModal(roleKey, label) {
 async function createPlayerTicket(guild, opener, kind) {
   const openerMember = await guild.members.fetch(opener.id).catch(() => null);
   const openerRank = leadershipRank(openerMember, opener.id);
-  const initialLevel = openerRank === 'founder'
-    ? (kind === 'bug' ? 'bug_founder' : 'founder')
-    : ['owner', 'co_owner'].includes(openerRank)
-      ? (kind === 'bug' ? 'bug_owner' : 'leadership')
-      : (kind === 'bug' ? 'developer' : 'staff');
+  const initialLevel = await initialTicketLevel(guild, kind, openerRank);
+  const openerName = openerMember?.displayName || opener.globalName || opener.username || opener.id;
   const channelOptions = {
-    name: makeTicketName(kind === 'bug' ? 'bug' : 'support', opener.id),
+    name: makeTicketName(kind === 'bug' ? 'bug' : 'support', openerName),
     type: ChannelType.GuildText,
     topic: serializeTicketMeta({
       kind,
@@ -767,11 +818,7 @@ async function createPlayerTicket(guild, opener, kind) {
       '',
       'Staff should be the first point of call. Use the buttons below when this needs moving up.'
     ].join('\n'),
-    embeds: [{
-      color: 2807784,
-      thumbnail: { url: unovaLogoUrl },
-      footer: { text: 'Unova Roleplay' }
-    }],
+    embeds: [ticketStatusEmbed(kind, initialLevel)],
     components: ticketButtons(kind, false),
     allowedMentions: { parse: ['roles', 'users'] }
   });
@@ -795,61 +842,27 @@ async function createPlayerTicket(guild, opener, kind) {
   return channel;
 }
 
-function nextSupportLevel(level) {
-  const index = supportTicketLevels.indexOf(level);
-  if (index === -1 || index >= supportTicketLevels.length - 1) return null;
-  return supportTicketLevels[index + 1];
-}
-
-function nextBugLevel(level) {
-  if (level === 'developer') return 'bug_owner';
-  if (level === 'bug_owner') return 'bug_founder';
-  return null;
-}
-
 function memberCanEscalateTicket(member, meta) {
   if (!member || !meta) return false;
   if (isFounderMember(member, member.id)) return true;
-  if (meta.kind === 'bug') {
-    if (meta.level === 'developer') {
-      return memberHasAnyRole(member, cleanIdList(
-        roleGroupIds(member.guild, 'developer').join(','),
-        roleGroupIds(member.guild, 'head_developer').join(',')
-      ));
-    }
-    if (meta.level === 'bug_owner') {
-      return memberHasAnyRole(member, leadershipRoleIds(member.guild));
-    }
-    return false;
-  }
-
   return memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level));
 }
 
-function ticketClaimLevelForMember(member, kind) {
+function ticketClaimLevelForMember(member, kind, openerRank) {
   if (!member) return null;
-  if (isFounderMember(member, member.id)) return kind === 'bug' ? 'bug_founder' : 'founder';
-  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'owner')) || memberHasAnyRole(member, roleGroupIds(member.guild, 'co_owner'))) {
-    return kind === 'bug' ? 'bug_owner' : 'leadership';
-  }
-  if (kind === 'bug' && memberHasAnyRole(member, cleanIdList(
-    roleGroupIds(member.guild, 'developer').join(','),
-    roleGroupIds(member.guild, 'head_developer').join(',')
-  ))) {
-    return 'developer';
-  }
-  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'server_manager'))) return 'server_manager';
-  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'staff_manager'))) return 'staff_manager';
-  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'senior_staff'))) return 'senior_staff';
-  if (memberHasAnyRole(member, roleGroupIds(member.guild, 'staff'))) return 'staff';
-  return null;
+  const rank = leadershipRank(member, member.id);
+  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  if (!levels.includes(rank)) return null;
+  if (rankValue(rank) <= rankValue(openerRank)) return null;
+  return rank;
 }
 
 async function claimTicketIfNeeded(message) {
   const meta = parseTicketMeta(message.channel);
   if (!meta || meta.kind === 'management' || (meta.claimed && meta.claimed !== 'none')) return;
+  if (message.author.id === meta.opener) return;
 
-  const claimLevel = ticketClaimLevelForMember(message.member, meta.kind);
+  const claimLevel = ticketClaimLevelForMember(message.member, meta.kind, meta.openerRank || 'player');
   if (!claimLevel) return;
 
   const nextMeta = { ...meta, level: claimLevel, claimed: message.author.id };
@@ -857,10 +870,27 @@ async function claimTicketIfNeeded(message) {
   await message.channel.permissionOverwrites.set(
     buildSupportTicketOverwrites(message.guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
   ).catch(() => null);
+  const opener = meta.opener ? await message.guild.members.fetch(meta.opener).catch(() => null) : null;
+  const openerName = opener?.displayName || meta.opener || 'ticket';
+  const staffName = message.member?.displayName || message.author.username;
+  await message.channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
   await message.channel.send({
     content: `Ticket claimed by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
+    embeds: [ticketStatusEmbed(meta.kind, claimLevel, message.author.id)],
     allowedMentions: { users: [message.author.id], roles: [] }
   }).catch(() => null);
+  await postDashboardInternal('/internal/tickets/upsert', {
+    id: message.channel.id,
+    channelId: message.channel.id,
+    guildId: message.guild.id,
+    channelName: message.channel.name,
+    kind: meta.kind,
+    level: claimLevel,
+    openerId: meta.opener,
+    source: meta.source || 'discord',
+    locked: meta.locked === 'true',
+    status: 'open'
+  });
   await logToStaff(`Ticket claimed: <#${message.channel.id}> by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
 }
 
@@ -879,8 +909,21 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
       `Ticket escalated by <@${actor.id}>.`,
       `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
     ].filter(Boolean).join('\n'),
+    embeds: [ticketStatusEmbed(nextKind, nextLevel, meta.claimed && meta.claimed !== 'none' ? meta.claimed : null)],
     components: ticketButtons(nextKind, meta.locked === 'true'),
     allowedMentions: { parse: ['roles', 'users'] }
+  });
+  await postDashboardInternal('/internal/tickets/upsert', {
+    id: channel.id,
+    channelId: channel.id,
+    guildId: channel.guild.id,
+    channelName: channel.name,
+    kind: nextKind,
+    level: nextLevel,
+    openerId: meta.opener,
+    source: meta.source || 'discord',
+    locked: meta.locked === 'true',
+    status: 'open'
   });
 }
 
@@ -894,7 +937,7 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
     return interaction.reply({ content: 'Your current role cannot escalate this ticket.', flags: MessageFlags.Ephemeral });
   }
 
-  const nextLevel = forcedLevel || (meta.kind === 'bug' ? nextBugLevel(meta.level) : nextSupportLevel(meta.level));
+  const nextLevel = forcedLevel || await nextAvailableTicketLevel(interaction.guild, meta.kind, meta.level);
   if (!nextLevel) {
     return interaction.reply({ content: 'This ticket is already at the highest level.', flags: MessageFlags.Ephemeral });
   }
@@ -936,8 +979,10 @@ async function createManagementTicket(guild, options) {
   const reason = options.reason || 'No reason provided';
   const label = options.label || 'ticket';
   const extraUserIds = targetUser ? [targetUser.id] : [];
+  const targetMember = targetUser ? await guild.members.fetch(targetUser.id).catch(() => null) : null;
+  const targetName = targetMember?.displayName || targetUser?.globalName || targetUser?.username || targetUser?.id;
   const channelOptions = {
-    name: makeTicketName(label, targetUser && targetUser.id),
+    name: makeTicketName(label, targetName),
     type: ChannelType.GuildText,
     topic: `unova-management-ticket | source=${options.source || 'discord'} | target=${targetUser ? targetUser.id : 'none'}`,
     permissionOverwrites: buildTicketOverwrites(guild, extraUserIds)
@@ -1202,6 +1247,36 @@ client.once(Events.ClientReady, async (readyClient) => {
       console.warn(`[Unova Bot] Whitelist channel setup failed: ${error.message}`);
     });
   }
+});
+
+client.on(Events.GuildMemberAdd, async (member) => {
+  if (cleanId(guildId) && member.guild.id !== cleanId(guildId)) return;
+  const channel = await member.guild.channels.fetch(cleanId(welcomeChannelId)).catch(() => null);
+  if (!channel) return;
+
+  await channel.send({
+    content: `Welcome to Unova Roleplay, ${member}!`,
+    embeds: [{
+      color: 2807784,
+      title: 'Welcome To Unova Roleplay',
+      description: [
+        `Welcome ${member} to the city.`,
+        '',
+        'Make sure you read the server information, get whitelisted, and keep your roleplay clean from Discord metagaming.'
+      ].join('\n'),
+      thumbnail: { url: member.user.displayAvatarURL({ size: 256 }) },
+      image: { url: unovaLogoUrl },
+      fields: [
+        { name: 'Next Step', value: 'Open a ticket if you need support getting started.', inline: true },
+        { name: 'Reminder', value: 'City and VC stay separate while you are in-game.', inline: true }
+      ],
+      footer: { text: 'Unova Roleplay Management', icon_url: unovaLogoUrl },
+      timestamp: new Date().toISOString()
+    }],
+    allowedMentions: { users: [member.id], roles: [] }
+  }).catch((error) => {
+    console.warn(`[Unova Bot] Welcome message failed: ${error.message}`);
+  });
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {

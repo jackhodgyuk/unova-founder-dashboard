@@ -5,6 +5,13 @@ const ticketsList = document.getElementById('tickets');
 const empty = document.getElementById('empty');
 const moderation = document.getElementById('moderation');
 const reportForm = document.getElementById('reportForm');
+const ticketReader = document.getElementById('ticketReader');
+const ticketTitle = document.getElementById('ticketTitle');
+const ticketMeta = document.getElementById('ticketMeta');
+const ticketMessages = document.getElementById('ticketMessages');
+const ticketReplyForm = document.getElementById('ticketReplyForm');
+const ticketReply = document.getElementById('ticketReply');
+const ticketNotice = document.getElementById('ticketNotice');
 const playerName = document.getElementById('playerName');
 const playerMeta = document.getElementById('playerMeta');
 const reason = document.getElementById('reason');
@@ -15,6 +22,7 @@ const toastStack = document.getElementById('toastStack');
 let players = [];
 let tickets = [];
 let selectedPlayer = null;
+let selectedTicket = null;
 
 function resourceName() {
   return typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'unova_dashboard_bridge';
@@ -36,6 +44,11 @@ function setNotice(message, ok) {
 function setReportNotice(message, ok) {
   reportNotice.textContent = message || '';
   reportNotice.className = ok ? 'notice ok' : 'notice error';
+}
+
+function setTicketNotice(message, ok) {
+  ticketNotice.textContent = message || '';
+  ticketNotice.className = ok ? 'notice ok' : 'notice error';
 }
 
 function showToast(title, message, ok = true) {
@@ -76,20 +89,67 @@ function renderTickets() {
   ticketsPanel.classList.toggle('hidden', !tickets.length);
   for (const ticket of tickets) {
     const item = document.createElement('div');
-    item.className = 'ticket';
-    item.innerHTML = `<strong>${ticket.channelName || 'ticket'}</strong><small>${ticket.kind || 'ticket'} | ${ticket.level || 'management'}</small>`;
+    item.className = `ticket${selectedTicket && selectedTicket.channelId === ticket.channelId ? ' active' : ''}`;
+    item.innerHTML = [
+      `<strong>${ticket.channelName || 'ticket'}</strong>`,
+      `<small>${ticket.kind || 'ticket'} | ${ticket.level || 'management'}</small>`,
+      '<button type="button">Open</button>'
+    ].join('');
+    item.querySelector('button').addEventListener('click', () => openTicket(ticket));
     ticketsList.appendChild(item);
   }
 }
 
+function renderTicketMessages(messages, canSend) {
+  ticketMessages.innerHTML = '';
+  if (!messages.length) {
+    ticketMessages.innerHTML = '<div class="ticket-message muted">No messages found.</div>';
+  }
+
+  for (const message of messages) {
+    const item = document.createElement('div');
+    item.className = `ticket-message${message.bot ? ' bot' : ''}`;
+    const attachments = (message.attachments || []).map((attachment) => (
+      `<a href="${escapeHtml(attachment.url)}" target="_blank">${escapeHtml(attachment.name || 'attachment')}</a>`
+    )).join('');
+    item.innerHTML = [
+      `<strong>${message.authorName || 'Unknown'} <small>${message.createdAt ? new Date(message.createdAt).toLocaleString() : ''}</small></strong>`,
+      `<p>${escapeHtml(message.content || '')}</p>`,
+      attachments ? `<div class="attachments">${attachments}</div>` : ''
+    ].join('');
+    ticketMessages.appendChild(item);
+  }
+  ticketMessages.scrollTop = ticketMessages.scrollHeight;
+  ticketReply.disabled = !canSend;
+  ticketReplyForm.querySelector('button').disabled = !canSend;
+  ticketReply.placeholder = canSend ? 'Reply to this Discord ticket from city' : 'Read-only: Discord permissions do not allow replies';
+}
+
+function openTicket(ticket) {
+  selectedTicket = ticket;
+  selectedPlayer = null;
+  empty.classList.add('hidden');
+  moderation.classList.add('hidden');
+  reportForm.classList.add('hidden');
+  ticketReader.classList.remove('hidden');
+  ticketTitle.textContent = ticket.channelName || 'Ticket';
+  ticketMeta.textContent = `${ticket.kind || 'ticket'} | ${ticket.level || 'management'} | ${ticket.targetName || ticket.openerName || 'Discord'}`;
+  setTicketNotice('Loading ticket messages...', true);
+  renderTickets();
+  postNui('openTicket', { channelId: ticket.channelId });
+}
+
 function selectPlayer(player) {
   selectedPlayer = player;
+  selectedTicket = null;
   playerName.textContent = player.name;
   playerMeta.textContent = `FiveM ID ${player.id} | Discord ${player.discordId || 'not linked'} | ${player.license || 'no license'}`;
   empty.classList.add('hidden');
   moderation.classList.remove('hidden');
+  ticketReader.classList.add('hidden');
   setNotice('', true);
   renderPlayers();
+  renderTickets();
 }
 
 function openPanel(nextPlayers) {
@@ -98,6 +158,7 @@ function openPanel(nextPlayers) {
   if (arguments.length > 1) tickets = arguments[1] || [];
   panel.classList.remove('hidden');
   reportForm.classList.add('hidden');
+  ticketReader.classList.add('hidden');
   renderPlayers();
   renderTickets();
 }
@@ -107,6 +168,7 @@ function openReport(nextPlayers) {
   panel.classList.remove('hidden');
   empty.classList.add('hidden');
   moderation.classList.add('hidden');
+  ticketReader.classList.add('hidden');
   reportForm.classList.remove('hidden');
   renderPlayers();
 }
@@ -114,8 +176,10 @@ function openReport(nextPlayers) {
 function closePanel() {
   panel.classList.add('hidden');
   selectedPlayer = null;
+  selectedTicket = null;
   empty.classList.remove('hidden');
   moderation.classList.add('hidden');
+  ticketReader.classList.add('hidden');
   reportForm.classList.add('hidden');
   reason.value = '';
   reportForm.reset();
@@ -138,7 +202,7 @@ window.addEventListener('message', (event) => {
     if (selectedPlayer) {
       selectedPlayer = players.find((player) => player.id === selectedPlayer.id) || null;
     }
-    if (!selectedPlayer) {
+    if (!selectedPlayer && !selectedTicket) {
       empty.classList.remove('hidden');
       moderation.classList.add('hidden');
     }
@@ -148,6 +212,7 @@ window.addEventListener('message', (event) => {
 
   if (data.type === 'notice') {
     setNotice(data.message, data.ok);
+    setTicketNotice(data.message, data.ok);
   }
 
   if (data.type === 'toast') {
@@ -157,6 +222,20 @@ window.addEventListener('message', (event) => {
 
   if (data.type === 'close') {
     closePanel();
+  }
+
+  if (data.type === 'ticketMessages') {
+    selectedTicket = data.ticket || selectedTicket;
+    if (selectedTicket) {
+      ticketTitle.textContent = selectedTicket.channelName || 'Ticket';
+      ticketMeta.textContent = `${selectedTicket.kind || 'ticket'} | ${selectedTicket.level || 'management'} | ${selectedTicket.targetName || selectedTicket.openerName || 'Discord'}`;
+    }
+    ticketReader.classList.remove('hidden');
+    empty.classList.add('hidden');
+    moderation.classList.add('hidden');
+    reportForm.classList.add('hidden');
+    renderTicketMessages(data.messages || [], data.canSend === true);
+    setTicketNotice(data.canSend ? 'Ticket loaded. You can reply from city.' : 'Ticket loaded as read-only.', data.canSend === true);
   }
 });
 
@@ -170,6 +249,22 @@ reportForm.addEventListener('submit', (event) => {
   }
   setReportNotice('Opening golden lottery ticket...', true);
   postNui('report', payload);
+});
+
+ticketReplyForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!selectedTicket) return;
+  const message = ticketReply.value.trim();
+  if (!message) {
+    setTicketNotice('Message is required.', false);
+    return;
+  }
+  setTicketNotice('Sending reply...', true);
+  postNui('replyTicket', {
+    channelId: selectedTicket.channelId,
+    message
+  });
+  ticketReply.value = '';
 });
 
 document.getElementById('close').addEventListener('click', () => {
@@ -208,3 +303,13 @@ document.addEventListener('keydown', (event) => {
     postNui('close');
   }
 });
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}

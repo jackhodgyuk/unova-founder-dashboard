@@ -897,11 +897,20 @@ async function upsertOpenTicket(ticket) {
   await ensureStateLoaded();
   const normalized = normalizeOpenTicket(ticket);
   if (!normalized) return null;
-  state.openTickets = state.openTickets.filter((item) => item.id !== normalized.id);
-  state.openTickets.unshift(normalized);
+  const existing = state.openTickets.find((item) => item.id === normalized.id || item.channelId === normalized.channelId);
+  const merged = existing ? {
+    ...existing,
+    ...normalized,
+    openerName: normalized.openerName || existing.openerName,
+    targetName: normalized.targetName || existing.targetName,
+    targetId: normalized.targetId || existing.targetId,
+    createdAt: existing.createdAt || normalized.createdAt
+  } : normalized;
+  state.openTickets = state.openTickets.filter((item) => item.id !== merged.id && item.channelId !== merged.channelId);
+  state.openTickets.unshift(merged);
   state.openTickets = state.openTickets.slice(0, 250);
   await savePersistentState();
-  return normalized;
+  return merged;
 }
 
 async function closeOpenTicket(id) {
@@ -918,6 +927,113 @@ async function closeOpenTicket(id) {
 async function activeTickets() {
   await ensureStateLoaded();
   return state.openTickets.filter((ticket) => ticket.status !== 'closed');
+}
+
+async function activeTicketByChannelId(channelId) {
+  const cleanChannelId = cleanId(channelId);
+  if (!cleanChannelId) return null;
+  const tickets = await activeTickets();
+  return tickets.find((ticket) => ticket.channelId === cleanChannelId) || null;
+}
+
+function publicDiscordTicketMessage(message) {
+  const author = message.author || {};
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  return {
+    id: cleanId(message.id),
+    authorId: cleanId(author.id),
+    authorName: author.global_name || author.username || 'Unknown',
+    bot: author.bot === true,
+    content: String(message.content || '').slice(0, 1800),
+    createdAt: message.timestamp || null,
+    editedAt: message.edited_timestamp || null,
+    attachments: attachments.map((attachment) => ({
+      id: cleanId(attachment.id),
+      name: String(attachment.filename || 'attachment').slice(0, 120),
+      url: String(attachment.url || '').slice(0, 500)
+    })).slice(0, 5)
+  };
+}
+
+async function getDiscordChannelMessages(token, channelId, maxMessages = 500) {
+  const messages = [];
+  let before = null;
+
+  while (messages.length < maxMessages) {
+    const limit = Math.min(100, maxMessages - messages.length);
+    const route = `/channels/${channelId}/messages?limit=${limit}${before ? `&before=${before}` : ''}`;
+    const batch = await getDiscord(token, route);
+    if (!Array.isArray(batch) || !batch.length) break;
+    messages.push(...batch);
+    before = batch[batch.length - 1].id;
+    if (batch.length < limit) break;
+  }
+
+  return messages;
+}
+
+const discordPermissionBits = {
+  administrator: 1n << 3n,
+  viewChannel: 1n << 10n,
+  sendMessages: 1n << 11n
+};
+
+function applyDiscordOverwrite(permissions, overwrite) {
+  const deny = BigInt(overwrite.deny || '0');
+  const allow = BigInt(overwrite.allow || '0');
+  return (permissions & ~deny) | allow;
+}
+
+async function resolveDiscordChannelPermissions(channelId, userId) {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const cleanChannelId = cleanId(channelId);
+  const cleanUserId = cleanId(userId);
+  if (!token || !guildId || !cleanChannelId || !cleanUserId) return { canView: false, canSend: false };
+
+  const ticket = await activeTicketByChannelId(cleanChannelId);
+  if (!ticket) return { canView: false, canSend: false };
+
+  const [channel, member, roles] = await Promise.all([
+    getDiscord(token, `/channels/${cleanChannelId}`),
+    getDiscord(token, `/guilds/${guildId}/members/${cleanUserId}`),
+    fetchDiscordRoles(token, guildId)
+  ]);
+
+  const memberRoleIds = new Set([guildId, ...(member.roles || []).map(cleanId).filter(Boolean)]);
+  const roleById = new Map(roles.map((role) => [cleanId(role.id), role]));
+  let permissions = BigInt(roleById.get(guildId)?.permissions || '0');
+  for (const roleId of memberRoleIds) {
+    if (roleId === guildId) continue;
+    permissions |= BigInt(roleById.get(roleId)?.permissions || '0');
+  }
+
+  if ((permissions & discordPermissionBits.administrator) === discordPermissionBits.administrator) {
+    return { canView: true, canSend: true };
+  }
+
+  const overwrites = Array.isArray(channel.permission_overwrites) ? channel.permission_overwrites : [];
+  const everyoneOverwrite = overwrites.find((overwrite) => cleanId(overwrite.id) === guildId && Number(overwrite.type) === 0);
+  if (everyoneOverwrite) permissions = applyDiscordOverwrite(permissions, everyoneOverwrite);
+
+  let roleAllow = 0n;
+  let roleDeny = 0n;
+  for (const overwrite of overwrites) {
+    if (Number(overwrite.type) !== 0) continue;
+    const overwriteId = cleanId(overwrite.id);
+    if (overwriteId === guildId || !memberRoleIds.has(overwriteId)) continue;
+    roleAllow |= BigInt(overwrite.allow || '0');
+    roleDeny |= BigInt(overwrite.deny || '0');
+  }
+  permissions = (permissions & ~roleDeny) | roleAllow;
+
+  const memberOverwrite = overwrites.find((overwrite) => cleanId(overwrite.id) === cleanUserId && Number(overwrite.type) === 1);
+  if (memberOverwrite) permissions = applyDiscordOverwrite(permissions, memberOverwrite);
+
+  return {
+    canView: (permissions & discordPermissionBits.viewChannel) === discordPermissionBits.viewChannel,
+    canSend: (permissions & discordPermissionBits.sendMessages) === discordPermissionBits.sendMessages
+  };
 }
 
 function parsePriorityRoleRules() {
@@ -1472,6 +1588,62 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && pathname === '/fivem/tickets') {
     if (!requireFiveM(req, res)) return;
     sendJson(res, 200, { tickets: await activeTickets() });
+    return;
+  }
+
+  const fivemTicketMessagesMatch = pathname.match(/^\/fivem\/tickets\/(\d+)\/messages$/);
+  if (req.method === 'GET' && fivemTicketMessagesMatch) {
+    if (!requireFiveM(req, res)) return;
+
+    const channelId = fivemTicketMessagesMatch[1];
+    const discordId = cleanId(requestUrl.searchParams.get('discordId'));
+    const permissions = await resolveDiscordChannelPermissions(channelId, discordId).catch((error) => {
+      console.warn(`[Unova API] Ticket permission check failed: ${error.response?.data?.message || error.message}`);
+      return { canView: false, canSend: false };
+    });
+    if (!permissions.canView) {
+      sendJson(res, 403, { error: 'Discord permissions do not allow this ticket.' });
+      return;
+    }
+
+    const token = process.env.DISCORD_BOT_TOKEN;
+    const ticket = await activeTicketByChannelId(channelId);
+    const messages = await getDiscordChannelMessages(token, channelId);
+    sendJson(res, 200, {
+      ticket,
+      canSend: permissions.canSend,
+      messages: messages.map(publicDiscordTicketMessage).reverse()
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && fivemTicketMessagesMatch) {
+    if (!requireFiveM(req, res)) return;
+
+    const channelId = fivemTicketMessagesMatch[1];
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId);
+    const authorName = String(body.authorName || 'In-city staff').trim().slice(0, 80);
+    const message = String(body.message || '').trim().slice(0, 1800);
+    if (!message) {
+      sendJson(res, 400, { error: 'Message is required.' });
+      return;
+    }
+
+    const permissions = await resolveDiscordChannelPermissions(channelId, discordId).catch((error) => {
+      console.warn(`[Unova API] Ticket send permission check failed: ${error.response?.data?.message || error.message}`);
+      return { canView: false, canSend: false };
+    });
+    if (!permissions.canSend) {
+      sendJson(res, 403, { error: 'Discord permissions do not allow sending in this ticket.' });
+      return;
+    }
+
+    const sent = await postDiscord(process.env.DISCORD_BOT_TOKEN, `/channels/${channelId}/messages`, {
+      content: `**In-city reply from ${authorName}**\n${message}`,
+      allowed_mentions: { parse: [] }
+    });
+    sendJson(res, 200, { ok: true, message: publicDiscordTicketMessage(sent) });
     return;
   }
 
