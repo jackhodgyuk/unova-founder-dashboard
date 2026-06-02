@@ -470,7 +470,7 @@ end
 
 local function openAdminPanel(src)
     if src == 0 then
-        print('[Unova Management] /adminui can only be opened in-game.')
+        print('[Unova Management] /unova can only be opened in-game.')
         return
     end
 
@@ -488,7 +488,16 @@ local function openAdminPanel(src)
     end)
 end
 
+RegisterCommand('unova', function(src)
+    openAdminPanel(src)
+end, false)
+
 RegisterCommand('adminui', function(src)
+    if src ~= 0 then
+        TriggerClientEvent('chat:addMessage', src, {
+            args = {'Unova Management', 'Use /unova. /adminui is now an alias.'}
+        })
+    end
     openAdminPanel(src)
 end, false)
 
@@ -508,7 +517,7 @@ end, false)
 RegisterCommand('founderui', function(src)
     if src ~= 0 then
         TriggerClientEvent('chat:addMessage', src, {
-            args = {'Unova Management', 'Use /adminui. /founderui is now an alias.'}
+            args = {'Unova Management', 'Use /unova. /founderui is now an alias.'}
         })
     end
     openAdminPanel(src)
