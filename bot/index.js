@@ -45,6 +45,10 @@ const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID || '145060437650
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
 const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
+const dashboardPublicUrl = (process.env.DASHBOARD_PUBLIC_URL || dashboardUrl || 'https://unova-founder-dashboard-git-597032418775.europe-west1.run.app')
+  .replace(/\/dashboard\/?$/i, '')
+  .replace(/\/$/, '');
+const unovaWelcomeBannerUrl = `${dashboardPublicUrl}/dashboard/assets/unova-welcome-banner.png`;
 const onlineFiveMDiscordIds = new Set();
 const vcDmCooldowns = new Map();
 
@@ -1285,21 +1289,29 @@ client.on(Events.GuildMemberAdd, async (member) => {
   const channel = await member.guild.channels.fetch(cleanId(welcomeChannelId)).catch(() => null);
   if (!channel) return;
 
+  const memberCount = member.guild.memberCount || 'new';
+  const memberLabel = typeof memberCount === 'number' ? `#${memberCount}` : memberCount;
+
   await channel.send({
-    content: `Welcome to Unova Roleplay, ${member}!`,
+    content: `Welcome ${member} to **Unova Roleplay | UNC**! You are member ${memberLabel}.`,
     embeds: [{
       color: 2807784,
-      title: 'Welcome To Unova Roleplay',
+      author: {
+        name: 'Unova Roleplay Welcomer',
+        icon_url: unovaLogoUrl
+      },
+      title: 'Welcome To Unova',
       description: [
-        `Welcome ${member} to the city.`,
+        `Good to have you here, ${member}.`,
         '',
-        'Make sure you read the server information, get whitelisted, and keep your roleplay clean from Discord metagaming.'
+        'Read the server information, get whitelisted, and keep Discord and city life separate while you are in-game.'
       ].join('\n'),
       thumbnail: { url: member.user.displayAvatarURL({ size: 256 }) },
-      image: { url: unovaLogoUrl },
+      image: { url: unovaWelcomeBannerUrl },
       fields: [
-        { name: 'Next Step', value: 'Open a ticket if you need support getting started.', inline: true },
-        { name: 'Reminder', value: 'City and VC stay separate while you are in-game.', inline: true }
+        { name: 'Member', value: memberLabel, inline: true },
+        { name: 'Start Here', value: 'Rules and whitelist', inline: true },
+        { name: 'Support', value: 'Open a ticket', inline: true }
       ],
       footer: { text: 'Unova Roleplay Management', icon_url: unovaLogoUrl },
       timestamp: new Date().toISOString()

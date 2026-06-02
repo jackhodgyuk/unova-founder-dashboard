@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07131a"/>
+      <stop offset="0.38" stop-color="#112a3a"/>
+      <stop offset="0.7" stop-color="#48205c"/>
+      <stop offset="1" stop-color="#ff2ca3"/>
+    </linearGradient>
+    <linearGradient id="un" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#24d8ee"/>
+      <stop offset="0.52" stop-color="#6c73ff"/>
+      <stop offset="1" stop-color="#ff2cac"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="18%" cy="44%" r="58%">
+      <stop offset="0" stop-color="#32e6ff" stop-opacity="0.58"/>
+      <stop offset="0.42" stop-color="#22d4e8" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#22d4e8" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="300" rx="30" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="30" fill="url(#glow)"/>
+  <g opacity="0.16">
+    <path d="M0 245 C130 205 224 284 358 232 S600 180 755 224 965 278 1200 208 L1200 300 L0 300 Z" fill="#09111a"/>
+    <path d="M0 84 C128 38 248 95 356 55 S588 22 718 68 940 112 1200 49" fill="none" stroke="#9ff6ff" stroke-width="2"/>
+    <path d="M0 116 C145 74 242 131 390 94 S612 64 774 105 980 147 1200 88" fill="none" stroke="#ff4bb8" stroke-width="2"/>
+  </g>
+  <g opacity="0.12" stroke="#ffffff" stroke-width="1">
+    <path d="M74 0v300M148 0v300M222 0v300M296 0v300M370 0v300M444 0v300M518 0v300M592 0v300M666 0v300M740 0v300M814 0v300M888 0v300M962 0v300M1036 0v300M1110 0v300"/>
+  </g>
+  <g filter="url(#softShadow)">
+    <rect x="72" y="56" width="156" height="156" rx="34" fill="#09131c" opacity="0.78"/>
+    <text x="150" y="165" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="76" font-weight="900" fill="url(#un)">UN</text>
+  </g>
+  <text x="270" y="112" font-family="Arial, Helvetica, sans-serif" font-size="23" font-weight="800" letter-spacing="3" fill="#31e7ff">UNOVA ROLEPLAY</text>
+  <text x="270" y="172" font-family="Arial Black, Arial, sans-serif" font-size="54" font-weight="900" fill="#ffffff">Welcome to the city</text>
+  <text x="272" y="218" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="600" fill="#d6e7f2">Whitelist • Support • Clean roleplay</text>
+  <circle cx="1062" cy="78" r="58" fill="#25dff1" opacity="0.16"/>
+  <circle cx="1110" cy="154" r="92" fill="#ff2cac" opacity="0.14"/>
+  <path d="M1045 211 h98" stroke="#ffffff" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+  <path d="M1068 232 h66" stroke="#31e7ff" stroke-width="5" stroke-linecap="round" opacity="0.75"/>
+</svg>
