@@ -427,6 +427,10 @@ function makeClaimedTicketName(openerName, staffName) {
   return `${channelSafeName(openerName)}-claimed-attention-${channelSafeName(staffName)}`.slice(0, 90);
 }
 
+function makeAttentionTicketName(openerName, level) {
+  return `${channelSafeName(openerName)}-attention-${channelSafeName(ticketLevelLabels[level] || level || 'management')}`.slice(0, 90);
+}
+
 function uniqueOverwrites(overwrites) {
   const seen = new Set();
   return overwrites.filter((overwrite) => {
@@ -909,8 +913,25 @@ async function claimTicketIfNeeded(message) {
   await logToStaff(`Ticket claimed: <#${message.channel.id}> by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
 }
 
-async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.kind) {
+function higherManagementAttentionEmbed(nextLevel, actor) {
+  return {
+    color: 15158332,
+    title: 'Higher Management Attention Required',
+    description: [
+      'This ticket requires attention from higher ranking members of Unova Management please.',
+      '',
+      `Escalated by <@${actor.id}>.`,
+      `Current level: **${ticketLevelLabels[nextLevel] || nextLevel}**.`
+    ].join('\n'),
+    footer: { text: 'Unova Ticket Escalation' },
+    timestamp: new Date().toISOString()
+  };
+}
+
+async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.kind, options = {}) {
+  const releaseClaim = options.releaseClaim === true;
   const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
+  if (releaseClaim) nextMeta.claimed = 'none';
   await channel.setTopic(serializeTicketMeta(nextMeta));
   await channel.permissionOverwrites.set(
     buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel, meta.openerRank)
@@ -924,10 +945,20 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
       `Ticket escalated by <@${actor.id}>.`,
       `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
     ].filter(Boolean).join('\n'),
-    embeds: [ticketStatusEmbed(nextKind, nextLevel, meta.claimed && meta.claimed !== 'none' ? meta.claimed : null)],
+    embeds: [
+      ...(options.attentionEmbed ? [options.attentionEmbed] : []),
+      ticketStatusEmbed(nextKind, nextLevel, releaseClaim ? null : meta.claimed && meta.claimed !== 'none' ? meta.claimed : null)
+    ],
     components: ticketButtons(nextKind, meta.locked === 'true'),
     allowedMentions: { parse: ['roles', 'users'] }
   });
+
+  if (releaseClaim) {
+    const opener = meta.opener ? await channel.guild.members.fetch(meta.opener).catch(() => null) : null;
+    const openerName = opener?.displayName || meta.opener || 'ticket';
+    await channel.setName(makeAttentionTicketName(openerName, nextLevel)).catch(() => null);
+  }
+
   await postDashboardInternal('/internal/tickets/upsert', {
     id: channel.id,
     channelId: channel.id,
@@ -959,7 +990,12 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const nextKind = forcedLevel === 'staff' ? 'support' : meta.kind;
-  await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, nextKind);
+  const actorRank = leadershipRank(interaction.member, interaction.user.id);
+  const staffEscalation = !forcedLevel && meta.kind === 'support' && actorRank === 'staff';
+  await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, nextKind, {
+    releaseClaim: staffEscalation,
+    attentionEmbed: staffEscalation ? higherManagementAttentionEmbed(nextLevel, interaction.user) : null
+  });
   return interaction.editReply(`Escalated to ${ticketLevelLabels[nextLevel] || nextLevel}.`);
 }
 
