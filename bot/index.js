@@ -1263,6 +1263,35 @@ async function ensureWhitelistChannel(guild) {
   return channel;
 }
 
+function isOldWelcomeMessage(message, memberId) {
+  if (!client.user || message.author?.id !== client.user.id) return false;
+  if (memberId && !message.content.includes(`<@${memberId}>`)) return false;
+
+  return message.embeds.some((embed) => {
+    const title = embed.title || '';
+    const description = embed.description || '';
+    const imageUrl = embed.image?.url || '';
+    return title === 'Welcome To Unova Roleplay'
+      || title === 'Welcome To Unova'
+      || imageUrl === unovaLogoUrl
+      || embed.fields?.some((field) => field.name === 'Start Here' || field.name === 'Support')
+      || description.includes('Welcome ')
+      && description.includes(' to the city.')
+      && description.includes('Discord metagaming');
+  });
+}
+
+async function cleanupOldWelcomeMessages(channel, memberId, excludeMessageId = null) {
+  const messages = await channel.messages.fetch({ limit: 25 }).catch(() => null);
+  if (!messages) return;
+
+  await Promise.all(messages.map(async (message) => {
+    if (excludeMessageId && message.id === excludeMessageId) return;
+    if (!isOldWelcomeMessage(message, memberId)) return;
+    await message.delete().catch(() => null);
+  }));
+}
+
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`[Unova Bot] Logged in as ${readyClient.user.tag}`);
   if (readyClient.user.username !== botDisplayName) {
@@ -1292,34 +1321,28 @@ client.on(Events.GuildMemberAdd, async (member) => {
   const memberCount = member.guild.memberCount || 'new';
   const memberLabel = typeof memberCount === 'number' ? `#${memberCount}` : memberCount;
 
-  await channel.send({
+  await cleanupOldWelcomeMessages(channel, member.id);
+
+  const sent = await channel.send({
     content: `Welcome ${member} to **Unova Roleplay | UNC**! You are member ${memberLabel}.`,
     embeds: [{
       color: 2807784,
-      author: {
-        name: 'Unova Roleplay Welcomer',
-        icon_url: unovaLogoUrl
-      },
-      title: 'Welcome To Unova',
-      description: [
-        `Good to have you here, ${member}.`,
-        '',
-        'Read the server information, get whitelisted, and keep Discord and city life separate while you are in-game.'
-      ].join('\n'),
-      thumbnail: { url: member.user.displayAvatarURL({ size: 256 }) },
-      image: { url: unovaWelcomeBannerUrl },
-      fields: [
-        { name: 'Member', value: memberLabel, inline: true },
-        { name: 'Start Here', value: 'Rules and whitelist', inline: true },
-        { name: 'Support', value: 'Open a ticket', inline: true }
-      ],
-      footer: { text: 'Unova Roleplay Management', icon_url: unovaLogoUrl },
-      timestamp: new Date().toISOString()
+      image: { url: unovaWelcomeBannerUrl }
     }],
     allowedMentions: { users: [member.id], roles: [] }
   }).catch((error) => {
     console.warn(`[Unova Bot] Welcome message failed: ${error.message}`);
   });
+
+  if (sent) {
+    setTimeout(() => cleanupOldWelcomeMessages(channel, member.id, sent.id), 3000);
+  }
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  if (!cleanId(welcomeChannelId) || message.channelId !== cleanId(welcomeChannelId)) return;
+  if (!isOldWelcomeMessage(message)) return;
+  await message.delete().catch(() => null);
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
