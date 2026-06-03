@@ -982,6 +982,19 @@ function timeoutModal(targetUserId) {
     );
 }
 
+function timeoutActionRow(targetUserId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`timeout_action:timeout:${targetUserId}`)
+      .setLabel('Timeout')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId(`timeout_action:untimeout:${targetUserId}`)
+      .setLabel('Untimeout')
+      .setStyle(ButtonStyle.Success)
+  );
+}
+
 async function createPlayerTicket(guild, opener, kind) {
   const openerMember = await guild.members.fetch(opener.id).catch(() => null);
   const openerRank = leadershipRank(openerMember, opener.id);
@@ -1704,6 +1717,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.showModal(pullPlayerModal());
     }
 
+    if (interaction.customId.startsWith('timeout_action:')) {
+      const [, action, targetId] = interaction.customId.split(':');
+      if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+        return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+      }
+
+      if (targetId === interaction.user.id) {
+        return interaction.reply({ content: 'You cannot use the timeout panel on yourself.', flags: MessageFlags.Ephemeral });
+      }
+
+      const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+      if (!target || !isManagementRank(leadershipRank(target, target.id))) {
+        return interaction.reply({ content: 'That management member is no longer available.', flags: MessageFlags.Ephemeral });
+      }
+
+      if (action === 'timeout') {
+        return interaction.showModal(timeoutModal(targetId));
+      }
+
+      if (action === 'untimeout') {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        if (!interaction.guild.members.me.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          return interaction.editReply('The bot is missing Moderate Members permission.');
+        }
+
+        try {
+          await target.timeout(null, `Timeout cleared by ${interaction.user.tag}`);
+          await logToStaff(`Timeout cleared: <@${target.id}> was untimed out by <@${interaction.user.id}>.`);
+          return interaction.editReply(`Cleared timeout for ${target.user.tag}.`);
+        } catch (error) {
+          return interaction.editReply(`Untimeout failed: ${error.message}`);
+        }
+      }
+
+      return interaction.reply({ content: 'Unknown timeout panel action.', flags: MessageFlags.Ephemeral });
+    }
+
     if (interaction.customId === 'ticket_escalate' || interaction.customId === 'ticket_bug_escalate') {
       return handleTicketEscalation(interaction);
     }
@@ -1761,7 +1811,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return interaction.reply({ content: 'That management member is no longer available.', flags: MessageFlags.Ephemeral });
     }
 
-    return interaction.showModal(timeoutModal(targetId));
+    return interaction.reply({
+      content: `Choose what to do with ${target}.`,
+      components: [timeoutActionRow(targetId)],
+      flags: MessageFlags.Ephemeral
+    });
   }
 
   if (interaction.isStringSelectMenu() && interaction.customId === 'role_grant_select') {
@@ -1945,8 +1999,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (interaction.commandName === 'timeoutpanel') {
-    if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
-      return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+    if (!isFounderMember(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Founder only.', flags: MessageFlags.Ephemeral });
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -1959,7 +2013,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         title: 'Unova Management Timeout Panel',
         description: [
           'Choose a management member from the dropdown.',
-          'You will then be asked to enter a timeout length and reason.'
+          'Then choose whether to timeout or untimeout them.'
         ].join('\n'),
         thumbnail: { url: unovaLogoUrl },
         footer: { text: 'Unova Management' }
