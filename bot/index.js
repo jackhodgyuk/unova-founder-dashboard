@@ -632,15 +632,7 @@ function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank =
   return uniqueOverwrites(overwrites);
 }
 
-async function onlineStaffMentions(guild, roleIds) {
-  const mentions = [];
-  for (const discordId of onlineFiveMDiscordIds) {
-    const member = await guild.members.fetch(discordId).catch(() => null);
-    if (!member || !memberHasAnyRole(member, roleIds)) continue;
-    mentions.push(`<@${discordId}>`);
-  }
-
-  if (mentions.length) return mentions.join(' ');
+function roleMentionLine(roleIds) {
   return roleIds.map((roleId) => `<@&${roleId}>`).join(' ');
 }
 
@@ -921,7 +913,7 @@ async function createPlayerTicket(guild, opener, kind) {
 
   const channel = await guild.channels.create(channelOptions);
   const notifyRoleIds = ticketLevelRoleIds(guild, kind, initialLevel);
-  const mentions = await onlineStaffMentions(guild, notifyRoleIds);
+  const mentions = roleMentionLine(notifyRoleIds);
   await channel.send({
     content: [
       mentions || makeManagementMentionLine(guild),
@@ -1032,10 +1024,10 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
   );
 
   const roleIds = ticketLevelRoleIds(channel.guild, nextKind, nextLevel);
-  const mentions = await onlineStaffMentions(channel.guild, roleIds);
+  const mentions = roleMentionLine(roleIds);
   await channel.send({
     content: [
-      mentions || roleIds.map((roleId) => `<@&${roleId}>`).join(' '),
+      mentions,
       `Ticket escalated by <@${actor.id}>.`,
       `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
     ].filter(Boolean).join('\n'),
