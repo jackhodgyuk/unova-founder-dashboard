@@ -348,6 +348,30 @@ function canMentionProtected(authorKey, targetKey) {
     || (upwardAllows[authorKey] || []).includes(targetKey);
 }
 
+function allowedEscalationTargetsForRank(actorRank, kind) {
+  const supportTargets = {
+    staff: ['senior_staff', 'staff_manager', 'server_manager', 'developer'],
+    senior_staff: ['staff_manager', 'server_manager', 'developer'],
+    staff_manager: ['server_manager', 'developer', 'head_developer', 'co_owner', 'owner'],
+    server_manager: ['developer', 'head_developer', 'co_owner', 'owner'],
+    developer: ['head_developer', 'co_owner', 'owner'],
+    head_developer: ['co_owner', 'owner', 'founder'],
+    co_owner: ['owner', 'founder'],
+    owner: ['founder'],
+    founder: supportTicketLevels
+  };
+  const bugTargets = {
+    developer: ['head_developer', 'co_owner', 'owner'],
+    head_developer: ['co_owner', 'owner', 'founder'],
+    co_owner: ['owner', 'founder'],
+    owner: ['founder'],
+    founder: bugTicketLevels
+  };
+  return kind === 'bug'
+    ? (bugTargets[actorRank] || [])
+    : (supportTargets[actorRank] || []);
+}
+
 function isMetagamingExempt(member) {
   if (!member) return false;
   return ['founder', 'owner', 'co_owner', 'developer', 'head_developer'].some((key) => {
@@ -361,6 +385,7 @@ function blockedProtectedMentions(message) {
   const blocked = [];
   const mentionedRoleIds = new Set(message.mentions.roles.map((role) => role.id));
   const mentionedUserIds = new Set(message.mentions.users.map((user) => user.id));
+  const repliedUserId = message.reference?.messageId ? message.mentions.repliedUser?.id : null;
 
   for (const [key, roleIds] of protectedMentionRoleMap(message.guild)) {
     if (canMentionProtected(authorKey, key)) continue;
@@ -371,6 +396,7 @@ function blockedProtectedMentions(message) {
   }
 
   for (const member of message.mentions.members.values()) {
+    if (repliedUserId && member.id === repliedUserId) continue;
     const targetKey = memberMentionKey(member);
     if (targetKey && targetKey !== 'whitelisted' && !canMentionProtected(authorKey, targetKey) && mentionedUserIds.has(member.id)) {
       blocked.push(`<@${member.id}>`);
@@ -695,6 +721,41 @@ function ticketButtons(kind, locked) {
   return [row];
 }
 
+async function escalationOptionsForMember(guild, member, meta) {
+  const actorRank = leadershipRank(member, member?.id);
+  const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  const currentIndex = levels.indexOf(meta.level);
+  const allowedTargets = allowedEscalationTargetsForRank(actorRank, meta.kind);
+  const options = [];
+
+  for (const level of levels) {
+    const levelIndex = levels.indexOf(level);
+    if (currentIndex !== -1 && levelIndex <= currentIndex) continue;
+    if (!allowedTargets.includes(level)) continue;
+    if (!await roleIdsHaveMembers(guild, ticketLevelRoleIds(guild, meta.kind, level))) continue;
+
+    options.push({
+      label: ticketLevelLabels[level] || level,
+      value: level,
+      description: `Escalate this ticket to ${ticketLevelLabels[level] || level}`
+    });
+  }
+
+  return options.slice(0, 25);
+}
+
+async function ticketEscalationPanel(guild, member, meta) {
+  const options = await escalationOptionsForMember(guild, member, meta);
+  if (!options.length) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('ticket_escalate_select')
+      .setPlaceholder('Choose who this ticket needs')
+      .addOptions(options)
+  );
+}
+
 function playerReportModal() {
   return new ModalBuilder()
     .setCustomId('player_report_modal')
@@ -983,6 +1044,19 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
     return interaction.reply({ content: 'Your current role cannot escalate this ticket.', flags: MessageFlags.Ephemeral });
   }
 
+  if (!forcedLevel) {
+    const panel = await ticketEscalationPanel(interaction.guild, interaction.member, meta);
+    if (!panel) {
+      return interaction.reply({ content: 'There are no available escalation options for your role right now.', flags: MessageFlags.Ephemeral });
+    }
+
+    return interaction.reply({
+      content: 'Choose who this ticket needs attention from.',
+      components: [panel],
+      flags: MessageFlags.Ephemeral
+    });
+  }
+
   const nextLevel = forcedLevel || await nextAvailableTicketLevel(interaction.guild, meta.kind, meta.level);
   if (!nextLevel) {
     return interaction.reply({ content: 'This ticket is already at the highest level.', flags: MessageFlags.Ephemeral });
@@ -993,6 +1067,32 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
   const actorRank = leadershipRank(interaction.member, interaction.user.id);
   const staffEscalation = !forcedLevel && meta.kind === 'support' && actorRank === 'staff';
   await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, nextKind, {
+    releaseClaim: staffEscalation,
+    attentionEmbed: staffEscalation ? higherManagementAttentionEmbed(nextLevel, interaction.user) : null
+  });
+  return interaction.editReply(`Escalated to ${ticketLevelLabels[nextLevel] || nextLevel}.`);
+}
+
+async function handleTicketEscalationSelection(interaction) {
+  const meta = parseTicketMeta(interaction.channel);
+  if (!meta || meta.kind === 'management') {
+    return interaction.reply({ content: 'This is not an escalatable player ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!memberCanEscalateTicket(interaction.member, meta)) {
+    return interaction.reply({ content: 'Your current role cannot escalate this ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  const nextLevel = interaction.values[0];
+  const availableOptions = await escalationOptionsForMember(interaction.guild, interaction.member, meta);
+  if (!availableOptions.some((option) => option.value === nextLevel)) {
+    return interaction.reply({ content: 'That escalation option is not available for your role.', flags: MessageFlags.Ephemeral });
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const actorRank = leadershipRank(interaction.member, interaction.user.id);
+  const staffEscalation = meta.kind === 'support' && actorRank === 'staff';
+  await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, meta.kind, {
     releaseClaim: staffEscalation,
     attentionEmbed: staffEscalation ? higherManagementAttentionEmbed(nextLevel, interaction.user) : null
   });
@@ -1448,6 +1548,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     return;
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_escalate_select') {
+    return handleTicketEscalationSelection(interaction);
   }
 
   if (interaction.isStringSelectMenu() && interaction.customId === 'role_grant_select') {
