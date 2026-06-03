@@ -277,6 +277,10 @@ function memberHasSeniorRoleGrantAccess(member, userId) {
     .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
 }
 
+function memberHasManagementRankAccess(member, userId) {
+  return isManagementMember(member, userId) || isManagementRank(leadershipRank(member, userId));
+}
+
 function leadershipRank(member, userId) {
   if (isFounderMember(member, userId)) return 'founder';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'owner'))) return 'owner';
@@ -289,6 +293,10 @@ function leadershipRank(member, userId) {
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff'))) return 'staff';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'whitelisted'))) return 'whitelisted';
   return 'player';
+}
+
+function isManagementRank(rank) {
+  return supportTicketLevels.includes(rank) || bugTicketLevels.includes(rank);
 }
 
 function protectedMentionRoleMap(guild) {
@@ -891,6 +899,89 @@ function roleGrantModal(roleKey, label) {
     );
 }
 
+function parseTimeoutDuration(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const match = raw.match(/^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)?$/);
+  if (!match) return null;
+
+  const amount = Number(match[1]);
+  const unit = match[2] || 'm';
+  const multipliers = {
+    m: 60_000,
+    min: 60_000,
+    mins: 60_000,
+    minute: 60_000,
+    minutes: 60_000,
+    h: 3_600_000,
+    hr: 3_600_000,
+    hrs: 3_600_000,
+    hour: 3_600_000,
+    hours: 3_600_000,
+    d: 86_400_000,
+    day: 86_400_000,
+    days: 86_400_000
+  };
+  const duration = amount * multipliers[unit];
+  const maxDuration = 28 * 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(duration) || duration < 60_000 || duration > maxDuration) return null;
+  return duration;
+}
+
+function formatTimeoutDuration(ms) {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes / 1440 === 1 ? '' : 's'}`;
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes / 60 === 1 ? '' : 's'}`;
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+async function timeoutPanelRow(guild) {
+  await guild.members.fetch().catch(() => null);
+  const options = guild.members.cache
+    .filter((member) => !member.user.bot && isManagementRank(leadershipRank(member, member.id)))
+    .sort((a, b) => rankValue(leadershipRank(b, b.id)) - rankValue(leadershipRank(a, a.id)) || a.displayName.localeCompare(b.displayName))
+    .first(25)
+    .map((member) => {
+      const rank = leadershipRank(member, member.id);
+      return {
+        label: member.displayName.slice(0, 100),
+        value: member.id,
+        description: (ticketLevelLabels[rank] || rank).slice(0, 100)
+      };
+    });
+
+  if (!options.length) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('timeout_target_select')
+      .setPlaceholder('Choose a management member')
+      .addOptions(options)
+  );
+}
+
+function timeoutModal(targetUserId) {
+  return new ModalBuilder()
+    .setCustomId(`timeout_modal:${targetUserId}`)
+    .setTitle('Timeout Management Member')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('duration')
+          .setLabel('Timeout length')
+          .setPlaceholder('Examples: 30m, 2h, 1d')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('reason')
+          .setLabel('Reason')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+      )
+    );
+}
+
 async function createPlayerTicket(guild, opener, kind) {
   const openerMember = await guild.members.fetch(opener.id).catch(() => null);
   const openerRank = leadershipRank(openerMember, opener.id);
@@ -1321,6 +1412,9 @@ async function registerSlashCommands(readyClient) {
         option.setName('user_id').setDescription('Optional Discord user ID or mention for legacy whitelist grant.').setRequired(false)
       ),
     new SlashCommandBuilder()
+      .setName('timeoutpanel')
+      .setDescription('Post the Unova management timeout panel.'),
+    new SlashCommandBuilder()
       .setName('panel')
       .setDescription('Founder-only ticket panel controls.')
       .addSubcommand((subcommand) =>
@@ -1652,6 +1746,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return handleTicketDeescalationSelection(interaction);
   }
 
+  if (interaction.isStringSelectMenu() && interaction.customId === 'timeout_target_select') {
+    if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+    }
+
+    const targetId = interaction.values[0];
+    if (targetId === interaction.user.id) {
+      return interaction.reply({ content: 'You cannot timeout yourself from this panel.', flags: MessageFlags.Ephemeral });
+    }
+
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target || !isManagementRank(leadershipRank(target, target.id))) {
+      return interaction.reply({ content: 'That management member is no longer available.', flags: MessageFlags.Ephemeral });
+    }
+
+    return interaction.showModal(timeoutModal(targetId));
+  }
+
   if (interaction.isStringSelectMenu() && interaction.customId === 'role_grant_select') {
     if (!memberHasRoleGrantAccess(interaction.member, interaction.user.id)) {
       return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
@@ -1760,9 +1872,45 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  if (interaction.isModalSubmit() && interaction.customId.startsWith('timeout_modal:')) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+      return interaction.editReply('Management only.');
+    }
+
+    const targetId = interaction.customId.split(':')[1];
+    if (targetId === interaction.user.id) {
+      return interaction.editReply('You cannot timeout yourself from this panel.');
+    }
+
+    const target = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!target || !isManagementRank(leadershipRank(target, target.id))) {
+      return interaction.editReply('That management member is no longer available.');
+    }
+
+    const durationText = interaction.fields.getTextInputValue('duration');
+    const duration = parseTimeoutDuration(durationText);
+    if (!duration) {
+      return interaction.editReply('Use a valid timeout length between 1 minute and 28 days, like `30m`, `2h`, or `1d`.');
+    }
+
+    const reason = interaction.fields.getTextInputValue('reason');
+    if (!interaction.guild.members.me.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+      return interaction.editReply('The bot is missing Moderate Members permission.');
+    }
+
+    try {
+      await target.timeout(duration, `Timed out by ${interaction.user.tag}: ${reason}`);
+      await logToStaff(`Timeout applied: <@${target.id}> was timed out by <@${interaction.user.id}> for ${formatTimeoutDuration(duration)}. Reason: ${reason}`);
+      return interaction.editReply(`Timed out ${target.user.tag} for ${formatTimeoutDuration(duration)}.`);
+    } catch (error) {
+      return interaction.editReply(`Timeout failed: ${error.message}`);
+    }
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName !== 'panel' && !isManagementMember(interaction.member, interaction.user.id)) {
+  if (interaction.commandName !== 'panel' && !memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
     return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
   }
 
@@ -1794,6 +1942,31 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.channel.delete('Management ticket closed.');
       return;
     }
+  }
+
+  if (interaction.commandName === 'timeoutpanel') {
+    if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const row = await timeoutPanelRow(interaction.guild);
+    if (!row) return interaction.editReply('No management users are available for the timeout panel.');
+
+    await interaction.channel.send({
+      embeds: [{
+        color: 15158332,
+        title: 'Unova Management Timeout Panel',
+        description: [
+          'Choose a management member from the dropdown.',
+          'You will then be asked to enter a timeout length and reason.'
+        ].join('\n'),
+        thumbnail: { url: unovaLogoUrl },
+        footer: { text: 'Unova Management' }
+      }],
+      components: [row]
+    });
+    return interaction.editReply('Timeout panel posted.');
   }
 
   if (interaction.commandName === 'panel') {
@@ -1902,7 +2075,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'add') {
     if (!isTicketChannel(interaction.channel)) {
-      return interaction.reply({ content: 'Use `/add` inside a Unova ticket channel.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: "Use /add inside a Unova ticket channel.", flags: MessageFlags.Ephemeral });
+      return;
     }
 
     const user = interaction.options.getUser('user', true);
@@ -1919,7 +2093,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'remove') {
     if (!isTicketChannel(interaction.channel)) {
-      return interaction.reply({ content: 'Use `/remove` inside a Unova ticket channel.', flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: "Use /remove inside a Unova ticket channel.", flags: MessageFlags.Ephemeral });
+      return;
     }
 
     const user = interaction.options.getUser('user', true);
