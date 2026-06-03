@@ -506,7 +506,7 @@ function buildTicketOverwrites(guild, extraUserIds = []) {
 }
 
 function isTicketChannel(channel) {
-  return Boolean(channel && channel.topic && channel.topic.includes('unova-management-ticket'));
+  return Boolean(parseTicketMeta(channel));
 }
 
 async function resolveTicketCategory(guild) {
@@ -958,12 +958,21 @@ function memberCanEscalateTicket(member, meta) {
   return memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level));
 }
 
-function ticketClaimLevelForMember(member, kind, openerRank) {
-  if (!member) return null;
+function ticketClaimLevelForCurrentTicket(member, meta) {
+  if (!member || !meta) return null;
   const rank = leadershipRank(member, member.id);
-  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
   if (!levels.includes(rank)) return null;
-  if (rankValue(rank) <= rankValue(openerRank)) return null;
+  if (rankValue(rank) <= rankValue(meta.openerRank || 'player')) return null;
+
+  if (meta.level && memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level))) {
+    return meta.level;
+  }
+
+  if (meta.level && levels.includes(meta.level) && rankValue(rank) < rankValue(meta.level)) {
+    return null;
+  }
+
   return rank;
 }
 
@@ -972,7 +981,7 @@ async function claimTicketIfNeeded(message) {
   if (!meta || meta.kind === 'management' || (meta.claimed && meta.claimed !== 'none')) return;
   if (message.author.id === meta.opener) return;
 
-  const claimLevel = ticketClaimLevelForMember(message.member, meta.kind, meta.openerRank || 'player');
+  const claimLevel = ticketClaimLevelForCurrentTicket(message.member, meta);
   if (!claimLevel) return;
 
   const nextMeta = { ...meta, level: claimLevel, claimed: message.author.id };
@@ -1893,7 +1902,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.commandName === 'add') {
     if (!isTicketChannel(interaction.channel)) {
-      return interaction.reply({ content: 'Use `/add` inside a management ticket channel.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Use `/add` inside a Unova ticket channel.', flags: MessageFlags.Ephemeral });
     }
 
     const user = interaction.options.getUser('user', true);
@@ -1904,18 +1913,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       AttachFiles: true,
       EmbedLinks: true
     });
-    await interaction.reply({ content: `Added ${user} to this management ticket.` });
+    await interaction.reply({ content: `Added ${user} to this ticket.` });
     return;
   }
 
   if (interaction.commandName === 'remove') {
     if (!isTicketChannel(interaction.channel)) {
-      return interaction.reply({ content: 'Use `/remove` inside a management ticket channel.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Use `/remove` inside a Unova ticket channel.', flags: MessageFlags.Ephemeral });
     }
 
     const user = interaction.options.getUser('user', true);
     await interaction.channel.permissionOverwrites.delete(user.id).catch(() => null);
-    await interaction.reply({ content: `Removed ${user} from this management ticket.` });
+    await interaction.reply({ content: `Removed ${user} from this ticket.` });
   }
 });
 
