@@ -455,12 +455,16 @@ function makeTicketName(label, userOrName) {
   return `${channelSafeName(label)}-${channelSafeName(name)}`.slice(0, 90);
 }
 
+function makeUnclaimedTicketName(label, openerName) {
+  return `${channelSafeName(label)}-unclaimed-${channelSafeName(openerName)}`.slice(0, 90);
+}
+
 function makeClaimedTicketName(openerName, staffName) {
-  return `${channelSafeName(openerName)}-claimed-attention-${channelSafeName(staffName)}`.slice(0, 90);
+  return `${channelSafeName(openerName)}-claimed-${channelSafeName(staffName)}`.slice(0, 90);
 }
 
 function makeAttentionTicketName(openerName, level) {
-  return `${channelSafeName(openerName)}-attention-${channelSafeName(ticketLevelLabels[level] || level || 'management')}`.slice(0, 90);
+  return `${channelSafeName(openerName)}-unclaimed-attention-${channelSafeName(ticketLevelLabels[level] || level || 'management')}`.slice(0, 90);
 }
 
 function uniqueOverwrites(overwrites) {
@@ -671,10 +675,11 @@ async function initialTicketLevel(guild, kind, openerRank) {
 function ticketStatusEmbed(kind, level, claimedBy = null) {
   return {
     color: 2807784,
+    title: claimedBy ? 'Claimed Ticket' : 'Unclaimed Ticket',
     thumbnail: { url: unovaLogoUrl },
     fields: [
       { name: 'Ticket Level', value: ticketLevelLabels[level] || level || 'Unknown', inline: true },
-      { name: 'Claimed By', value: claimedBy ? `<@${claimedBy}>` : 'Not claimed', inline: true }
+      { name: 'Claimed By', value: claimedBy ? `<@${claimedBy}>` : 'Unclaimed', inline: true }
     ],
     footer: { text: kind === 'bug' ? 'Unova Bug Report' : 'Unova Support' }
   };
@@ -892,7 +897,7 @@ async function createPlayerTicket(guild, opener, kind) {
   const initialLevel = await initialTicketLevel(guild, kind, openerRank);
   const openerName = openerMember?.displayName || opener.globalName || opener.username || opener.id;
   const channelOptions = {
-    name: makeTicketName(kind === 'bug' ? 'bug' : 'support', openerName),
+    name: makeUnclaimedTicketName(kind === 'bug' ? 'bug' : 'support', openerName),
     type: ChannelType.GuildText,
     topic: serializeTicketMeta({
       kind,
