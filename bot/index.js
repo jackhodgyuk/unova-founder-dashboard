@@ -372,6 +372,12 @@ function allowedEscalationTargetsForRank(actorRank, kind) {
     : (supportTargets[actorRank] || []);
 }
 
+function allowedDeescalationTargetsForRank(actorRank, kind) {
+  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  if (actorRank === 'founder') return levels;
+  return levels.filter((level) => rankValue(level) < rankValue(actorRank));
+}
+
 function isMetagamingExempt(member) {
   if (!member) return false;
   return ['founder', 'owner', 'co_owner', 'developer', 'head_developer'].some((key) => {
@@ -663,13 +669,6 @@ async function nextAvailableTicketLevel(guild, kind, currentLevel) {
   return nearestAvailableTicketLevel(guild, kind, levels, index + 1);
 }
 
-function previousTicketLevel(kind, currentLevel) {
-  const levels = kind === 'bug' ? bugTicketLevels : supportTicketLevels;
-  const index = levels.indexOf(currentLevel);
-  if (index <= 0) return null;
-  return levels[index - 1];
-}
-
 async function initialTicketLevel(guild, kind, openerRank) {
   if (kind === 'bug') return nearestAvailableTicketLevel(guild, kind, bugTicketLevels, 0);
   const openerIndex = supportTicketLevels.indexOf(openerRank);
@@ -752,6 +751,40 @@ async function ticketEscalationPanel(guild, member, meta) {
     new StringSelectMenuBuilder()
       .setCustomId('ticket_escalate_select')
       .setPlaceholder('Choose who this ticket needs')
+      .addOptions(options)
+  );
+}
+
+async function deescalationOptionsForMember(member, meta) {
+  const actorRank = leadershipRank(member, member?.id);
+  const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  const currentIndex = levels.indexOf(meta.level);
+  const allowedTargets = allowedDeescalationTargetsForRank(actorRank, meta.kind);
+  const options = [];
+
+  for (const level of levels) {
+    const levelIndex = levels.indexOf(level);
+    if (currentIndex !== -1 && levelIndex >= currentIndex) continue;
+    if (!allowedTargets.includes(level)) continue;
+
+    options.push({
+      label: ticketLevelLabels[level] || level,
+      value: level,
+      description: `De-escalate this ticket to ${ticketLevelLabels[level] || level}`
+    });
+  }
+
+  return options.slice(0, 25);
+}
+
+async function ticketDeescalationPanel(member, meta) {
+  const options = await deescalationOptionsForMember(member, meta);
+  if (!options.length) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('ticket_deescalate_select')
+      .setPlaceholder('Choose where to move this ticket down')
       .addOptions(options)
   );
 }
@@ -1109,9 +1142,32 @@ async function handleTicketDeescalation(interaction) {
     return interaction.reply({ content: 'Your current role cannot de-escalate this ticket.', flags: MessageFlags.Ephemeral });
   }
 
-  const previousLevel = previousTicketLevel(meta.kind, meta.level);
-  if (!previousLevel) {
-    return interaction.reply({ content: 'This ticket is already at the lowest level.', flags: MessageFlags.Ephemeral });
+  const panel = await ticketDeescalationPanel(interaction.member, meta);
+  if (!panel) {
+    return interaction.reply({ content: 'There are no available de-escalation options for your role right now.', flags: MessageFlags.Ephemeral });
+  }
+
+  return interaction.reply({
+    content: 'Choose where this ticket should be moved down to.',
+    components: [panel],
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+async function handleTicketDeescalationSelection(interaction) {
+  const meta = parseTicketMeta(interaction.channel);
+  if (!meta || meta.kind === 'management') {
+    return interaction.reply({ content: 'This is not a de-escalatable player ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (!memberCanEscalateTicket(interaction.member, meta)) {
+    return interaction.reply({ content: 'Your current role cannot de-escalate this ticket.', flags: MessageFlags.Ephemeral });
+  }
+
+  const previousLevel = interaction.values[0];
+  const availableOptions = await deescalationOptionsForMember(interaction.member, meta);
+  if (!availableOptions.some((option) => option.value === previousLevel)) {
+    return interaction.reply({ content: 'That de-escalation option is not available for your role.', flags: MessageFlags.Ephemeral });
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -1552,6 +1608,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_escalate_select') {
     return handleTicketEscalationSelection(interaction);
+  }
+
+  if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_deescalate_select') {
+    return handleTicketDeescalationSelection(interaction);
   }
 
   if (interaction.isStringSelectMenu() && interaction.customId === 'role_grant_select') {
