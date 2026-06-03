@@ -1018,6 +1018,7 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
   const releaseClaim = options.releaseClaim === true;
   const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
   if (releaseClaim) nextMeta.claimed = 'none';
+  if (options.claimedBy) nextMeta.claimed = options.claimedBy;
   await channel.setTopic(serializeTicketMeta(nextMeta));
   await channel.permissionOverwrites.set(
     buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel, meta.openerRank)
@@ -1025,24 +1026,33 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
 
   const roleIds = ticketLevelRoleIds(channel.guild, nextKind, nextLevel);
   const mentions = roleMentionLine(roleIds);
+  const statusClaimedBy = releaseClaim
+    ? null
+    : options.claimedBy || (meta.claimed && meta.claimed !== 'none' ? meta.claimed : null);
   await channel.send({
     content: [
       mentions,
-      `Ticket escalated by <@${actor.id}>.`,
+      options.actionText || `Ticket escalated by <@${actor.id}>.`,
       `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
     ].filter(Boolean).join('\n'),
     embeds: [
       ...(options.attentionEmbed ? [options.attentionEmbed] : []),
-      ticketStatusEmbed(nextKind, nextLevel, releaseClaim ? null : meta.claimed && meta.claimed !== 'none' ? meta.claimed : null)
+      ticketStatusEmbed(nextKind, nextLevel, statusClaimedBy)
     ],
     components: ticketButtons(nextKind, meta.locked === 'true'),
     allowedMentions: { parse: ['roles', 'users'] }
   });
 
-  if (releaseClaim) {
+  if (releaseClaim || options.claimedBy) {
     const opener = meta.opener ? await channel.guild.members.fetch(meta.opener).catch(() => null) : null;
     const openerName = opener?.displayName || meta.opener || 'ticket';
-    await channel.setName(makeAttentionTicketName(openerName, nextLevel)).catch(() => null);
+    if (options.claimedBy) {
+      const claimant = await channel.guild.members.fetch(options.claimedBy).catch(() => null);
+      const staffName = claimant?.displayName || actor.username || actor.id;
+      await channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
+    } else {
+      await channel.setName(makeAttentionTicketName(openerName, nextLevel)).catch(() => null);
+    }
   }
 
   await postDashboardInternal('/internal/tickets/upsert', {
@@ -1173,6 +1183,10 @@ async function handleTicketOverride(interaction) {
     return interaction.reply({ content: 'This is not a Unova ticket.', flags: MessageFlags.Ephemeral });
   }
 
+  if (meta.source === 'founder' || meta.openerRank === 'founder') {
+    return interaction.reply({ content: 'Founder tickets cannot be overridden by anyone.', flags: MessageFlags.Ephemeral });
+  }
+
   const locked = meta.locked === 'true' || meta.source === 'founder' || meta.source === 'fivem-ui';
   const founder = isFounderMember(interaction.member, interaction.user.id);
   if (locked && !founder) {
@@ -1181,6 +1195,21 @@ async function handleTicketOverride(interaction) {
 
   if (!founder && !isPrivilegedOverrideMember(interaction.member, interaction.user.id)) {
     return interaction.reply({ content: 'Only co-owners, owners, or the founder can override tickets.', flags: MessageFlags.Ephemeral });
+  }
+
+  if (meta.kind && meta.kind !== 'management') {
+    const overrideLevel = leadershipRank(interaction.member, interaction.user.id);
+    const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+    if (!levels.includes(overrideLevel)) {
+      return interaction.reply({ content: 'Your role cannot set a ticket level.', flags: MessageFlags.Ephemeral });
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await moveTicketLevel(interaction.channel, meta, overrideLevel, interaction.user, meta.kind, {
+      claimedBy: interaction.user.id,
+      actionText: `Ticket overridden by <@${interaction.user.id}>.`
+    });
+    return interaction.editReply(`Override granted. Ticket is now at ${ticketLevelLabels[overrideLevel] || overrideLevel}.`);
   }
 
   await interaction.channel.permissionOverwrites.edit(interaction.user.id, {
