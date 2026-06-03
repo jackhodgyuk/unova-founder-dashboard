@@ -1178,7 +1178,10 @@ async function handleTicketDeescalationSelection(interaction) {
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  await moveTicketLevel(interaction.channel, meta, previousLevel, interaction.user, meta.kind);
+  await moveTicketLevel(interaction.channel, meta, previousLevel, interaction.user, meta.kind, {
+    releaseClaim: true,
+    actionText: `Ticket de-escalated by <@${interaction.user.id}> and marked unclaimed.`
+  });
   return interaction.editReply(`De-escalated to ${ticketLevelLabels[previousLevel] || previousLevel}.`);
 }
 
