@@ -963,7 +963,7 @@ async function postDashboardAnnouncement(body, user) {
   }
 
   const title = String(body.title || 'Unova Announcement').trim().slice(0, 256);
-  const authorName = String(body.authorName || 'Unova Roleplay').trim().slice(0, 256) || 'Unova Roleplay';
+  const footerName = String(body.authorName || user.name || 'Staff').trim().slice(0, 256) || 'Staff';
   const message = String(body.message || '').trim().slice(0, 3900);
   if (!message) {
     return { status: 400, payload: { error: 'Announcement text is required.' } };
@@ -975,12 +975,12 @@ async function postDashboardAnnouncement(body, user) {
   const embed = {
     color: parseEmbedColor(body.color),
     author: {
-      name: authorName,
+      name: 'Unova Roleplay',
       icon_url: unovaLogoUrl
     },
     title,
     description: message,
-    footer: { text: `Unova Management • ${user.name || 'Staff'}` },
+    footer: { text: `Unova Management • ${footerName}` },
     timestamp: new Date().toISOString()
   };
   if (imageUrl) embed.image = { url: imageUrl };
