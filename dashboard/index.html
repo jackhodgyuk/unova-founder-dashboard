@@ -171,6 +171,8 @@
               <h4>Discord Embed</h4>
               <label for="announcementTitle">Title</label>
               <input id="announcementTitle" name="title" type="text" maxlength="256" placeholder="Unova Announcement">
+              <label for="announcementAuthor">Author Name</label>
+              <input id="announcementAuthor" name="authorName" type="text" maxlength="256" placeholder="Unova Roleplay">
               <label for="announcementMessage">Message</label>
               <textarea id="announcementMessage" name="message" rows="8" maxlength="3900" placeholder="Write the announcement text..." required></textarea>
               <div class="form-grid">
@@ -179,8 +181,14 @@
                   <input id="announcementColor" name="color" type="color" value="#28d7e8">
                 </div>
                 <div>
-                  <label for="announcementRoles">Tag Role IDs</label>
-                  <input id="announcementRoles" name="roleIds" type="text" placeholder="Role ID, @role, or comma-separated IDs">
+                  <label for="announcementRole">Tag Role</label>
+                  <select id="announcementRole" name="roleId">
+                    <option value="">None</option>
+                    <option value="1450651506930880516">Whitelisted</option>
+                    <option value="1483451364703998005">Business Owner</option>
+                    <option value="1475496342296989696">PD</option>
+                    <option value="1475496508911780093">UHS</option>
+                  </select>
                 </div>
               </div>
               <label for="announcementImageUrl">Image URL</label>

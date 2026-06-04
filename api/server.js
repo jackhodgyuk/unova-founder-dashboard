@@ -57,6 +57,12 @@ const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
 const defaultDiscordLogChannelId = '1451550213595467889';
 const defaultAnnouncementChannelId = '1450774864427352175';
+const announcementTagRoleIds = new Set([
+  '1450651506930880516',
+  '1483451364703998005',
+  '1475496342296989696',
+  '1475496508911780093'
+]);
 const storage = new Storage();
 let firebaseAdminApp = null;
 
@@ -908,7 +914,9 @@ function normalizeRoleMentions(value) {
     String(value || '')
       .replace(/<@&(\d{15,25})>/g, '$1')
       .replace(/[^\d, ]/g, ',')
-  ).slice(0, 10);
+  )
+    .filter((roleId) => announcementTagRoleIds.has(roleId))
+    .slice(0, 1);
 }
 
 function normalizeImageUrl(value) {
@@ -955,6 +963,7 @@ async function postDashboardAnnouncement(body, user) {
   }
 
   const title = String(body.title || 'Unova Announcement').trim().slice(0, 256);
+  const authorName = String(body.authorName || 'Unova Roleplay').trim().slice(0, 256) || 'Unova Roleplay';
   const message = String(body.message || '').trim().slice(0, 3900);
   if (!message) {
     return { status: 400, payload: { error: 'Announcement text is required.' } };
@@ -966,7 +975,7 @@ async function postDashboardAnnouncement(body, user) {
   const embed = {
     color: parseEmbedColor(body.color),
     author: {
-      name: 'Unova Roleplay',
+      name: authorName,
       icon_url: unovaLogoUrl
     },
     title,

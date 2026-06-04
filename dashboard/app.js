@@ -617,9 +617,10 @@ announcementForm.addEventListener('submit', async (event) => {
       method: 'POST',
       body: JSON.stringify({
         title: data.title,
+        authorName: data.authorName,
         message: data.message,
         color: data.color,
-        roleIds: data.roleIds,
+        roleId: data.roleId,
         imageUrl: data.imageUrl,
         upload
       })
