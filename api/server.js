@@ -965,9 +965,12 @@ async function postDashboardAnnouncement(body, user) {
   const attachment = normalizeAnnouncementAttachment(body.upload);
   const embed = {
     color: parseEmbedColor(body.color),
+    author: {
+      name: 'Unova Roleplay',
+      icon_url: unovaLogoUrl
+    },
     title,
     description: message,
-    thumbnail: { url: unovaLogoUrl },
     footer: { text: `Unova Management • ${user.name || 'Staff'}` },
     timestamp: new Date().toISOString()
   };
