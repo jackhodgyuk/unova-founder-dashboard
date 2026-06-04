@@ -51,6 +51,10 @@ const dashboardPublicUrl = (process.env.DASHBOARD_PUBLIC_URL || dashboardUrl || 
 const unovaWelcomeBannerUrl = `${dashboardPublicUrl}/dashboard/assets/unova-welcome-banner.png`;
 const onlineFiveMDiscordIds = new Set();
 const vcDmCooldowns = new Map();
+const inactiveReminderAfterMs = 48 * 60 * 60 * 1000;
+const inactiveReminderCloseAfterMs = 6 * 60 * 60 * 1000;
+const inactiveReminderNoResponseAfterMs = 2 * 60 * 60 * 1000;
+const founderRoleId = '1480636794151108638';
 
 if (!guildId || guildId === 'your_discord_server_id') {
   console.warn('DISCORD_GUILD_ID is not configured. Slash commands will not be registered.');
@@ -174,7 +178,7 @@ function roleGroupIds(guild, group) {
       names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES, 'Owner', 'Owners']
     },
     founder: {
-      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS],
+      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS, founderRoleId],
       names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES, 'Founder', 'Founders']
     },
     developer: {
@@ -599,7 +603,21 @@ function parseTicketMeta(channel) {
 }
 
 function serializeTicketMeta(meta) {
-  return [
+  if (meta.kind === 'management') {
+    const managementParts = [
+      'unova-management-ticket',
+      `source=${meta.source || 'discord'}`,
+      `target=${meta.target || 'none'}`
+    ];
+
+    for (const key of ['inactivePromptAt', 'inactiveCloseAt', 'inactiveReminderMessage', 'inactiveKeepOpen']) {
+      if (meta[key]) managementParts.push(`${key}=${meta[key]}`);
+    }
+
+    return managementParts.join(' | ');
+  }
+
+  const parts = [
     'unova-support-ticket',
     `kind=${meta.kind || 'support'}`,
     `level=${meta.level || 'staff'}`,
@@ -608,7 +626,13 @@ function serializeTicketMeta(meta) {
     `claimed=${meta.claimed || 'none'}`,
     `source=${meta.source || 'player'}`,
     `locked=${meta.locked === true || meta.locked === 'true' ? 'true' : 'false'}`
-  ].join(' | ');
+  ];
+
+  for (const key of ['inactivePromptAt', 'inactiveCloseAt', 'inactiveReminderMessage', 'inactiveKeepOpen']) {
+    if (meta[key]) parts.push(`${key}=${meta[key]}`);
+  }
+
+  return parts.join(' | ');
 }
 
 function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank = 'staff') {
@@ -723,6 +747,179 @@ function ticketButtons(kind, locked) {
   }
 
   return [row];
+}
+
+function inactiveTicketButtons() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ticket_inactive_keep')
+        .setLabel('Yes, Keep Open')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('ticket_inactive_close')
+        .setLabel('No, Close Ticket')
+        .setStyle(ButtonStyle.Danger)
+    )
+  ];
+}
+
+function disabledInactiveTicketButtons() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ticket_inactive_keep_disabled')
+        .setLabel('Kept Open')
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId('ticket_inactive_close_disabled')
+        .setLabel('Close Cancelled')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true)
+    )
+  ];
+}
+
+function inactiveTicketEmbed(channel, promptAtMs, closeAtMs) {
+  const now = Date.now();
+  const closeUnix = Math.floor(closeAtMs / 1000);
+  const noResponseAtMs = promptAtMs + inactiveReminderNoResponseAfterMs;
+  const status = now >= noResponseAtMs
+    ? 'No response has been received yet. This ticket is now in its closing countdown.'
+    : `Waiting for a response. If nobody clicks a button by <t:${Math.floor(noResponseAtMs / 1000)}:R>, the closing countdown stays active.`;
+
+  return {
+    color: 15158332,
+    title: 'Keep This Ticket Open?',
+    description: [
+      `This ticket has been inactive for 48 hours: ${channel}.`,
+      '',
+      status,
+      `Auto-close: <t:${closeUnix}:R>`,
+      `Close time: <t:${closeUnix}:F>`
+    ].join('\n'),
+    thumbnail: { url: unovaLogoUrl },
+    footer: { text: 'Unova Ticket Inactivity Check' },
+    timestamp: new Date().toISOString()
+  };
+}
+
+function memberCanAnswerInactivePrompt(member, userId, meta) {
+  return userId === meta.opener
+    || isPrivilegedOverrideMember(member, userId)
+    || memberCanEscalateTicket(member, meta)
+    || memberHasManagementRankAccess(member, userId);
+}
+
+async function deleteInactiveReminderMessage(channel, meta) {
+  const reminderId = cleanId(meta.inactiveReminderMessage);
+  if (!reminderId) return;
+  const message = await channel.messages.fetch(reminderId).catch(() => null);
+  if (message) await message.delete().catch(() => null);
+}
+
+async function setInactiveMeta(channel, meta, updates) {
+  const nextMeta = { ...meta, ...updates };
+  for (const [key, value] of Object.entries(nextMeta)) {
+    if (value === null || value === undefined || value === '') delete nextMeta[key];
+  }
+  await channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null);
+  return nextMeta;
+}
+
+async function clearInactiveReminder(channel, meta, options = {}) {
+  if (!meta?.inactiveReminderMessage) return;
+  if (options.deleteMessage !== false) await deleteInactiveReminderMessage(channel, meta);
+  await setInactiveMeta(channel, meta, {
+    inactivePromptAt: null,
+    inactiveCloseAt: null,
+    inactiveReminderMessage: null,
+    inactiveKeepOpen: options.keepOpen ? 'true' : null
+  });
+}
+
+async function latestHumanTicketActivity(channel, reminderId) {
+  const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!messages) return channel.createdTimestamp || Date.now();
+
+  const humanMessage = messages
+    .filter((message) => !message.author.bot && message.id !== reminderId)
+    .sort((a, b) => b.createdTimestamp - a.createdTimestamp)
+    .first();
+
+  return humanMessage?.createdTimestamp || channel.createdTimestamp || Date.now();
+}
+
+async function sendInactiveReminder(channel, meta) {
+  const promptAtMs = Date.now();
+  const closeAtMs = promptAtMs + inactiveReminderCloseAfterMs;
+  const reminder = await channel.send({
+    content: 'This ticket has been quiet for 48 hours.',
+    embeds: [inactiveTicketEmbed(channel, promptAtMs, closeAtMs)],
+    components: inactiveTicketButtons(),
+    allowedMentions: { parse: [] }
+  });
+
+  await setInactiveMeta(channel, meta, {
+    inactivePromptAt: String(promptAtMs),
+    inactiveCloseAt: String(closeAtMs),
+    inactiveReminderMessage: reminder.id,
+    inactiveKeepOpen: null
+  });
+}
+
+async function updateInactiveReminder(channel, meta) {
+  const closeAtMs = Number(meta.inactiveCloseAt || 0);
+  const promptAtMs = Number(meta.inactivePromptAt || 0);
+  const reminderId = cleanId(meta.inactiveReminderMessage);
+  if (!closeAtMs || !promptAtMs || !reminderId) return;
+
+  if (Date.now() >= closeAtMs) {
+    await channel.send('Ticket closed automatically after no response to the inactivity check.').catch(() => null);
+    await postDashboardInternal('/internal/tickets/close', { channelId: channel.id });
+    await channel.delete('Ticket inactive after reminder countdown.').catch(() => null);
+    return;
+  }
+
+  const message = await channel.messages.fetch(reminderId).catch(() => null);
+  if (!message) {
+    await setInactiveMeta(channel, meta, {
+      inactivePromptAt: null,
+      inactiveCloseAt: null,
+      inactiveReminderMessage: null
+    });
+    return;
+  }
+
+  await message.edit({
+    embeds: [inactiveTicketEmbed(channel, promptAtMs, closeAtMs)],
+    components: inactiveTicketButtons()
+  }).catch(() => null);
+}
+
+async function checkInactiveTickets(guild) {
+  await guild.channels.fetch().catch(() => null);
+  const channels = guild.channels.cache.filter((channel) =>
+    channel.type === ChannelType.GuildText && parseTicketMeta(channel)
+  );
+
+  for (const channel of channels.values()) {
+    const meta = parseTicketMeta(channel);
+    if (!meta || meta.inactiveKeepOpen === 'true') continue;
+
+    if (meta.inactiveReminderMessage) {
+      await updateInactiveReminder(channel, meta);
+      continue;
+    }
+
+    const lastActivityAt = await latestHumanTicketActivity(channel);
+    if (Date.now() - lastActivityAt >= inactiveReminderAfterMs) {
+      await sendInactiveReminder(channel, meta).catch((error) => {
+        console.warn(`[Unova Bot] Inactive ticket reminder failed for ${channel.id}: ${error.message}`);
+      });
+    }
+  }
 }
 
 async function escalationOptionsForMember(guild, member, meta) {
@@ -1428,6 +1625,9 @@ async function registerSlashCommands(readyClient) {
       .setName('timeoutpanel')
       .setDescription('Post the Unova management timeout panel.'),
     new SlashCommandBuilder()
+      .setName('ticketinactive')
+      .setDescription('Founder-only test: post the inactive ticket reminder in this ticket.'),
+    new SlashCommandBuilder()
       .setName('panel')
       .setDescription('Founder-only ticket panel controls.')
       .addSubcommand((subcommand) =>
@@ -1647,6 +1847,14 @@ client.once(Events.ClientReady, async (readyClient) => {
     await ensureWhitelistChannel(guild).catch((error) => {
       console.warn(`[Unova Bot] Whitelist channel setup failed: ${error.message}`);
     });
+    await checkInactiveTickets(guild).catch((error) => {
+      console.warn(`[Unova Bot] Inactive ticket check failed: ${error.message}`);
+    });
+    setInterval(() => {
+      checkInactiveTickets(guild).catch((error) => {
+        console.warn(`[Unova Bot] Inactive ticket check failed: ${error.message}`);
+      });
+    }, 10 * 60 * 1000);
   }
 });
 
@@ -1715,6 +1923,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
       }
       return interaction.showModal(pullPlayerModal());
+    }
+
+    if (interaction.customId === 'ticket_inactive_keep' || interaction.customId === 'ticket_inactive_close') {
+      const meta = parseTicketMeta(interaction.channel);
+      if (!meta) return interaction.reply({ content: 'This is not a Unova ticket.', flags: MessageFlags.Ephemeral });
+      if (!memberCanAnswerInactivePrompt(interaction.member, interaction.user.id, meta)) {
+        return interaction.reply({ content: 'You cannot answer this ticket reminder.', flags: MessageFlags.Ephemeral });
+      }
+
+      if (interaction.customId === 'ticket_inactive_keep') {
+        await setInactiveMeta(interaction.channel, meta, {
+          inactivePromptAt: null,
+          inactiveCloseAt: null,
+          inactiveReminderMessage: null,
+          inactiveKeepOpen: 'true'
+        });
+        await interaction.update({
+          content: `Ticket kept open by <@${interaction.user.id}>. I will not remind again for this ticket.`,
+          embeds: [{
+            color: 5763719,
+            title: 'Ticket Kept Open',
+            description: `Confirmed by <@${interaction.user.id}>.`,
+            thumbnail: { url: unovaLogoUrl },
+            timestamp: new Date().toISOString()
+          }],
+          components: disabledInactiveTicketButtons(),
+          allowedMentions: { users: [interaction.user.id], roles: [] }
+        });
+        return;
+      }
+
+      await interaction.reply({ content: 'Closing this inactive ticket.', flags: MessageFlags.Ephemeral });
+      await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
+      await interaction.channel.delete(`Inactive ticket closed by ${interaction.user.tag}.`).catch(() => null);
+      return;
     }
 
     if (interaction.customId.startsWith('timeout_action:')) {
@@ -2023,6 +2266,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return interaction.editReply('Timeout panel posted.');
   }
 
+  if (interaction.commandName === 'ticketinactive') {
+    if (!isFounderMember(interaction.member, interaction.user.id)) {
+      return interaction.reply({ content: 'Founder only.', flags: MessageFlags.Ephemeral });
+    }
+
+    const meta = parseTicketMeta(interaction.channel);
+    if (!meta) {
+      return interaction.reply({ content: 'Use this inside a Unova ticket channel.', flags: MessageFlags.Ephemeral });
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (meta.inactiveReminderMessage) {
+      await clearInactiveReminder(interaction.channel, meta).catch(() => null);
+    }
+    await sendInactiveReminder(interaction.channel, parseTicketMeta(interaction.channel) || meta);
+    return interaction.editReply('Inactive ticket reminder posted for testing.');
+  }
+
   if (interaction.commandName === 'panel') {
     if (!isFounderMember(interaction.member, interaction.user.id)) {
       return interaction.reply({ content: 'Founder settings only.', flags: MessageFlags.Ephemeral });
@@ -2171,6 +2432,11 @@ client.on(Events.MessageCreate, async (message) => {
     }).catch(() => null);
     await logToStaff(`Protected mention blocked from <@${message.author.id}> in <#${message.channel.id}>: ${blockedMentions.join(', ')}`);
     return;
+  }
+
+  const ticketMeta = parseTicketMeta(message.channel);
+  if (ticketMeta?.inactiveReminderMessage && ticketMeta.inactiveKeepOpen !== 'true') {
+    await clearInactiveReminder(message.channel, ticketMeta).catch(() => null);
   }
 
   await claimTicketIfNeeded(message);

@@ -26,6 +26,10 @@
             <span class="nav-icon">A</span>
             <span>Actions</span>
           </button>
+          <button id="announcementsNavButton" type="button" data-view="announcements">
+            <span class="nav-icon">N</span>
+            <span>Announcements</span>
+          </button>
           <button id="ticketsNavButton" type="button" data-view="tickets">
             <span class="nav-icon">T</span>
             <span>Tickets</span>
@@ -154,6 +158,36 @@
               <span id="actionsQueueCount">Queue 0</span>
             </div>
             <div id="actionsList" class="actions-list"></div>
+          </section>
+
+          <section id="announcementsView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Announcement Maker</h3>
+              <span>Posts to announcements</span>
+            </div>
+            <form id="announcementForm" class="config-panel announcement-panel">
+              <h4>Discord Embed</h4>
+              <label for="announcementTitle">Title</label>
+              <input id="announcementTitle" name="title" type="text" maxlength="256" placeholder="Unova Announcement">
+              <label for="announcementMessage">Message</label>
+              <textarea id="announcementMessage" name="message" rows="8" maxlength="3900" placeholder="Write the announcement text..." required></textarea>
+              <div class="form-grid">
+                <div>
+                  <label for="announcementColor">Embed Colour</label>
+                  <input id="announcementColor" name="color" type="color" value="#28d7e8">
+                </div>
+                <div>
+                  <label for="announcementRoles">Tag Role IDs</label>
+                  <input id="announcementRoles" name="roleIds" type="text" placeholder="Role ID, @role, or comma-separated IDs">
+                </div>
+              </div>
+              <label for="announcementImageUrl">Image URL</label>
+              <input id="announcementImageUrl" name="imageUrl" type="url" placeholder="https://r2.fivemanage.com/.../image.png">
+              <label for="announcementImageFile">Upload Image</label>
+              <input id="announcementImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+              <button id="announcementSubmitButton" type="submit">Post Announcement</button>
+              <p id="announcementNotice" class="form-notice"></p>
+            </form>
           </section>
 
           <section id="ticketsView" class="actions-view hidden">

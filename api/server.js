@@ -56,6 +56,7 @@ const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.P
 const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state.json';
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
 const defaultDiscordLogChannelId = '1451550213595467889';
+const defaultAnnouncementChannelId = '1450774864427352175';
 const storage = new Storage();
 let firebaseAdminApp = null;
 
@@ -715,6 +716,30 @@ async function discordRequest(method, token, route, body) {
   return data;
 }
 
+async function discordMultipartRequest(token, route, payload, attachment) {
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify(payload));
+  form.append('files[0]', new Blob([attachment.buffer], { type: attachment.contentType }), attachment.filename);
+
+  const response = await fetch(`${discordApiBase}${route}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bot ${token}`
+    },
+    body: form,
+    signal: AbortSignal.timeout(15000)
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(data.message || `Discord API returned ${response.status}`);
+    error.response = { data, status: response.status };
+    throw error;
+  }
+
+  return data;
+}
+
 async function getDiscord(token, route) {
   return discordRequest('GET', token, route);
 }
@@ -868,6 +893,114 @@ async function logDiscordAction(lines) {
   }).catch((error) => {
     console.warn(`[Unova API] Discord log failed: ${error.response?.data?.message || error.message}`);
   });
+}
+
+function parseEmbedColor(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 2807784;
+  const normalized = raw.startsWith('#') ? raw.slice(1) : raw.replace(/^0x/i, '');
+  if (!/^[0-9a-f]{6}$/i.test(normalized)) return 2807784;
+  return Number.parseInt(normalized, 16);
+}
+
+function normalizeRoleMentions(value) {
+  return cleanIdList(
+    String(value || '')
+      .replace(/<@&(\d{15,25})>/g, '$1')
+      .replace(/[^\d, ]/g, ',')
+  ).slice(0, 10);
+}
+
+function normalizeImageUrl(value) {
+  const url = String(value || '').trim();
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.toString().slice(0, 500);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeAnnouncementAttachment(upload) {
+  if (!upload || typeof upload !== 'object') return null;
+  const dataUrl = String(upload.dataUrl || '');
+  const match = dataUrl.match(/^data:(image\/(?:png|jpe?g|gif|webp));base64,([a-z0-9+/=]+)$/i);
+  if (!match) return null;
+
+  const buffer = Buffer.from(match[2], 'base64');
+  if (!buffer.length || buffer.length > 8 * 1024 * 1024) return null;
+
+  const extension = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/gif': 'gif',
+    'image/webp': 'webp'
+  }[match[1].toLowerCase()] || 'png';
+
+  return {
+    buffer,
+    contentType: match[1].toLowerCase(),
+    filename: `unova-announcement.${extension}`
+  };
+}
+
+async function postDashboardAnnouncement(body, user) {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const channelId = cleanId(process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID) || defaultAnnouncementChannelId;
+  if (!token || !channelId) {
+    return { status: 500, payload: { error: 'Discord announcement channel is not configured.' } };
+  }
+
+  const title = String(body.title || 'Unova Announcement').trim().slice(0, 256);
+  const message = String(body.message || '').trim().slice(0, 3900);
+  if (!message) {
+    return { status: 400, payload: { error: 'Announcement text is required.' } };
+  }
+
+  const roleIds = normalizeRoleMentions(body.roleIds || body.roleId || body.tagRoles);
+  const imageUrl = normalizeImageUrl(body.imageUrl);
+  const attachment = normalizeAnnouncementAttachment(body.upload);
+  const embed = {
+    color: parseEmbedColor(body.color),
+    title,
+    description: message,
+    thumbnail: { url: unovaLogoUrl },
+    footer: { text: `Unova Management • ${user.name || 'Staff'}` },
+    timestamp: new Date().toISOString()
+  };
+  if (imageUrl) embed.image = { url: imageUrl };
+  if (attachment) embed.image = { url: `attachment://${attachment.filename}` };
+
+  const payload = {
+    content: roleIds.map((roleId) => `<@&${roleId}>`).join(' ') || undefined,
+    embeds: [embed],
+    allowed_mentions: { roles: roleIds }
+  };
+
+  const posted = attachment
+    ? await discordMultipartRequest(token, `/channels/${channelId}/messages`, payload, attachment)
+    : await postDiscord(token, `/channels/${channelId}/messages`, payload);
+
+  await logDiscordAction([
+    '**Dashboard Announcement Posted**',
+    `Actor: ${user.name || user.uid} (${user.role || 'unknown role'})`,
+    `Channel: <#${channelId}>`,
+    `Title: ${title}`,
+    roleIds.length ? `Tagged roles: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}` : 'Tagged roles: none'
+  ]);
+
+  return {
+    status: 200,
+    payload: {
+      ok: true,
+      messageId: posted.id,
+      channelId,
+      url: `https://discord.com/channels/${process.env.DISCORD_GUILD_ID || '@me'}/${channelId}/${posted.id}`
+    }
+  };
 }
 
 function normalizeOpenTicket(value) {
@@ -1752,6 +1885,15 @@ async function handleRequest(req, res) {
       rules: await getPriorityRules(),
       overrides: await getPriorityOverrides()
     });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/announcements') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'staff')) return;
+
+    const result = await postDashboardAnnouncement(await readBody(req, 12 * 1024 * 1024), user);
+    sendJson(res, result.status, result.payload);
     return;
   }
 

@@ -741,7 +741,8 @@ button {
 }
 
 .config-panel input,
-.config-panel select {
+.config-panel select,
+.config-panel textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -749,6 +750,33 @@ button {
   background: #090d13;
   outline: none;
   padding: 11px;
+}
+
+.config-panel textarea {
+  resize: vertical;
+}
+
+.config-panel input[type="color"] {
+  min-height: 42px;
+  padding: 4px;
+}
+
+.config-panel input[type="file"] {
+  color: var(--muted);
+}
+
+.announcement-panel {
+  max-width: 860px;
+}
+
+.announcement-panel a {
+  color: var(--cyan);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 12px;
 }
 
 .user-role-list .user-role-item {
@@ -853,6 +881,7 @@ button {
   .player-row,
   .action-item,
   .priority-grid,
+  .form-grid,
   .config-list > div {
     grid-template-columns: 1fr;
   }

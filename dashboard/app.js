@@ -30,9 +30,11 @@ const statUpdated = document.getElementById('statUpdated');
 const actionsList = document.getElementById('actionsList');
 const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
+const announcementsView = document.getElementById('announcementsView');
 const ticketsView = document.getElementById('ticketsView');
 const priorityView = document.getElementById('priorityView');
 const settingsView = document.getElementById('settingsView');
+const announcementsNavButton = document.getElementById('announcementsNavButton');
 const settingsNavButton = document.getElementById('settingsNavButton');
 const founderSettingsPanel = document.getElementById('founderSettingsPanel');
 const founderCleanupPanel = document.getElementById('founderCleanupPanel');
@@ -45,6 +47,10 @@ const priorityOverridesList = document.getElementById('priorityOverridesList');
 const ticketsNavButton = document.getElementById('ticketsNavButton');
 const ticketsList = document.getElementById('ticketsList');
 const displayNameInput = document.getElementById('displayName');
+const announcementForm = document.getElementById('announcementForm');
+const announcementNotice = document.getElementById('announcementNotice');
+const announcementSubmitButton = document.getElementById('announcementSubmitButton');
+const announcementImageFile = document.getElementById('announcementImageFile');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -96,6 +102,10 @@ function canManagePriority() {
 
 function canViewTickets() {
   return roleRank(dashboardUser?.role) >= roleRank('co_owner');
+}
+
+function canPostAnnouncements() {
+  return roleRank(dashboardUser?.role) >= roleRank('staff');
 }
 
 function describeFirebaseError(error) {
@@ -174,6 +184,7 @@ function renderStatus(data) {
     founderSettingsPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
     founderCleanupPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
+    announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
     if (dashboardUser.role === 'founder') loadFirebaseUsers();
   }
@@ -457,6 +468,34 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    if (!/^image\/(png|jpe?g|gif|webp)$/i.test(file.type)) {
+      reject(new Error('Use a PNG, JPG, GIF, or WebP image.'));
+      return;
+    }
+
+    if (file.size > 8 * 1024 * 1024) {
+      reject(new Error('Image upload must be 8MB or smaller.'));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      name: file.name,
+      type: file.type,
+      dataUrl: String(reader.result || '')
+    });
+    reader.onerror = () => reject(new Error('Could not read that image.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function loadStatus() {
   if (!authToken) return;
 
@@ -556,11 +595,53 @@ document.querySelectorAll('.nav button').forEach((button) => {
     const view = button.dataset.view;
     playersView.classList.toggle('hidden', view !== 'players');
     actionsView.classList.toggle('hidden', view !== 'actions');
+    announcementsView.classList.toggle('hidden', view !== 'announcements');
     ticketsView.classList.toggle('hidden', view !== 'tickets');
     priorityView.classList.toggle('hidden', view !== 'priority');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();
   });
+});
+
+announcementForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canPostAnnouncements()) return;
+
+  announcementNotice.textContent = 'Posting announcement...';
+  announcementSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(announcementForm));
+    const upload = await readImageFile(announcementImageFile.files?.[0]);
+    const response = await api('/dashboard/announcements', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: data.title,
+        message: data.message,
+        color: data.color,
+        roleIds: data.roleIds,
+        imageUrl: data.imageUrl,
+        upload
+      })
+    }).catch(() => null);
+
+    if (!response || !response.ok) {
+      const error = response ? await response.json().catch(() => ({})) : {};
+      announcementNotice.textContent = error.error || 'Announcement failed.';
+      return;
+    }
+
+    const posted = await response.json();
+    announcementForm.reset();
+    document.getElementById('announcementColor').value = '#28d7e8';
+    announcementNotice.innerHTML = posted.url
+      ? `Announcement posted. <a href="${posted.url}" target="_blank" rel="noreferrer">Open in Discord</a>`
+      : 'Announcement posted.';
+  } catch (error) {
+    announcementNotice.textContent = error.message || 'Announcement failed.';
+  } finally {
+    announcementSubmitButton.disabled = false;
+  }
 });
 
 priorityRoleForm.addEventListener('submit', async (event) => {
