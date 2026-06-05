@@ -1267,14 +1267,14 @@ function memberCanEscalateTicket(member, meta) {
 
 function ticketClaimLevelForCurrentTicket(member, meta) {
   if (!member || !meta) return null;
-  const rank = leadershipRank(member, member.id);
-  const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
-  if (!levels.includes(rank)) return null;
-  if (rankValue(rank) <= rankValue(meta.openerRank || 'player')) return null;
 
   if (meta.level && memberHasAnyRole(member, ticketLevelRoleIds(member.guild, meta.kind, meta.level))) {
     return meta.level;
   }
+
+  const rank = leadershipRank(member, member.id);
+  const levels = meta.kind === 'bug' ? bugTicketLevels : supportTicketLevels;
+  if (!levels.includes(rank)) return null;
 
   if (meta.level && levels.includes(meta.level) && rankValue(rank) < rankValue(meta.level)) {
     return null;
