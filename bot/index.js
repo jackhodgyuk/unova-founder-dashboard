@@ -720,6 +720,10 @@ function ticketStatusEmbed(kind, level, claimedBy = null) {
 function ticketButtons(kind, locked) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId('ticket_claim')
+      .setLabel('Claim')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
       .setCustomId(kind === 'bug' ? 'ticket_bug_escalate' : 'ticket_escalate')
       .setLabel('Escalate')
       .setStyle(ButtonStyle.Primary),
@@ -737,16 +741,18 @@ function ticketButtons(kind, locked) {
       .setStyle(ButtonStyle.Danger)
   );
 
+  const rows = [row];
+
   if (kind === 'bug') {
-    row.addComponents(
+    rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('ticket_bug_to_staff')
         .setLabel('Send To Staff')
         .setStyle(ButtonStyle.Success)
-    );
+    ));
   }
 
-  return [row];
+  return rows;
 }
 
 function inactiveTicketButtons() {
@@ -1277,33 +1283,43 @@ function ticketClaimLevelForCurrentTicket(member, meta) {
   return rank;
 }
 
-async function claimTicketIfNeeded(message) {
-  const meta = parseTicketMeta(message.channel);
-  if (!meta || meta.kind === 'management' || (meta.claimed && meta.claimed !== 'none')) return;
-  if (message.author.id === meta.opener) return;
+async function claimTicket(channel, guild, member, user) {
+  const meta = parseTicketMeta(channel);
+  if (!meta || meta.kind === 'management') {
+    return { ok: false, message: 'This ticket cannot be claimed.' };
+  }
+  if (meta.claimed && meta.claimed !== 'none') {
+    return { ok: false, message: `This ticket is already claimed by <@${meta.claimed}>.` };
+  }
+  if (user.id === meta.opener) {
+    return { ok: false, message: 'You cannot claim your own ticket.' };
+  }
 
-  const claimLevel = ticketClaimLevelForCurrentTicket(message.member, meta);
-  if (!claimLevel) return;
+  const claimLevel = ticketClaimLevelForCurrentTicket(member, meta);
+  if (!claimLevel) {
+    return { ok: false, message: 'Your current role cannot claim this ticket.' };
+  }
 
-  const nextMeta = { ...meta, level: claimLevel, claimed: message.author.id };
-  await message.channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null);
-  await message.channel.permissionOverwrites.set(
-    buildSupportTicketOverwrites(message.guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
+  const nextMeta = { ...meta, level: claimLevel, claimed: user.id };
+  await channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null);
+  await channel.permissionOverwrites.set(
+    buildSupportTicketOverwrites(guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
   ).catch(() => null);
-  const opener = meta.opener ? await message.guild.members.fetch(meta.opener).catch(() => null) : null;
+  const opener = meta.opener ? await guild.members.fetch(meta.opener).catch(() => null) : null;
   const openerName = opener?.displayName || meta.opener || 'ticket';
-  const staffName = message.member?.displayName || message.author.username;
-  await message.channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
-  await message.channel.send({
-    content: `Ticket claimed by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
-    embeds: [ticketStatusEmbed(meta.kind, claimLevel, message.author.id)],
-    allowedMentions: { users: [message.author.id], roles: [] }
+  const staffName = member?.displayName || user.username;
+  await channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
+  await channel.send({
+    content: `Ticket claimed by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
+    embeds: [ticketStatusEmbed(meta.kind, claimLevel, user.id)],
+    components: ticketButtons(meta.kind, meta.locked === 'true'),
+    allowedMentions: { users: [user.id], roles: [] }
   }).catch(() => null);
   await postDashboardInternal('/internal/tickets/upsert', {
-    id: message.channel.id,
-    channelId: message.channel.id,
-    guildId: message.guild.id,
-    channelName: message.channel.name,
+    id: channel.id,
+    channelId: channel.id,
+    guildId: guild.id,
+    channelName: channel.name,
     kind: meta.kind,
     level: claimLevel,
     openerId: meta.opener,
@@ -1311,7 +1327,17 @@ async function claimTicketIfNeeded(message) {
     locked: meta.locked === 'true',
     status: 'open'
   });
-  await logToStaff(`Ticket claimed: <#${message.channel.id}> by <@${message.author.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
+  await logToStaff(`Ticket claimed: <#${channel.id}> by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
+  return { ok: true, message: `Claimed at ${ticketLevelLabels[claimLevel] || claimLevel}.` };
+}
+
+async function handleTicketClaim(interaction) {
+  const result = await claimTicket(interaction.channel, interaction.guild, interaction.member, interaction.user);
+  return interaction.reply({
+    content: result.message,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { users: [], roles: [] }
+  });
 }
 
 function higherManagementAttentionEmbed(nextLevel, actor) {
@@ -2009,6 +2035,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return handleTicketEscalation(interaction, 'staff');
     }
 
+    if (interaction.customId === 'ticket_claim') {
+      return handleTicketClaim(interaction);
+    }
+
     if (interaction.customId === 'ticket_override') {
       return handleTicketOverride(interaction);
     }
@@ -2438,8 +2468,6 @@ client.on(Events.MessageCreate, async (message) => {
   if (ticketMeta?.inactiveReminderMessage && ticketMeta.inactiveKeepOpen !== 'true') {
     await clearInactiveReminder(message.channel, ticketMeta).catch(() => null);
   }
-
-  await claimTicketIfNeeded(message);
 
   if (isWhitelistChannel(message.channel)) {
     if (!memberHasRoleGrantAccess(message.member, message.author.id)) {
