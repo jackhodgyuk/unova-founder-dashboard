@@ -14,7 +14,7 @@ local API_KEY_CONFIGURED = API_KEY ~= '' and API_KEY ~= 'change_this_fivem_secre
 local connectingQueue = {}
 local queueSerial = 0
 local spectateCaptureInFlight = {}
-local SPECTATE_FRAME_INTERVAL_MS = 33
+local SPECTATE_FRAME_INTERVAL_MS = 100
 
 local function apiUrl(path)
     return DASHBOARD_URL .. path
@@ -299,7 +299,7 @@ local function requestScreenshotFromResource(resourceName, target, cb)
     return pcall(function()
         exports[resourceName]:requestClientScreenshot(tonumber(target) or target, {
             encoding = 'jpg',
-            quality = 0.38
+            quality = 0.18
         }, function(first, second)
             local errorMessage = nil
             local image = nil

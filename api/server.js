@@ -57,7 +57,7 @@ const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
 const defaultDiscordLogChannelId = '1451550213595467889';
 const defaultAnnouncementChannelId = '1450774864427352175';
-const spectateFrameIntervalMs = 33.33;
+const spectateFrameIntervalMs = 100;
 const announcementTagRoleIds = new Set([
   '1450651506930880516',
   '1483451364703998005',

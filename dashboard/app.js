@@ -405,7 +405,7 @@ async function startWebsiteSpectate(player) {
 
   const data = await response.json();
   spectateSessionId = data.session?.id;
-  spectateTimer = setInterval(pollSpectateFrame, 33.33);
+  spectateTimer = setInterval(pollSpectateFrame, 100);
   await pollSpectateFrame();
 }
 
