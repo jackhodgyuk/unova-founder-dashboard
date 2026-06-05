@@ -13,6 +13,8 @@ local DASHBOARD_URL = normalizeDashboardUrl(RAW_DASHBOARD_URL)
 local API_KEY_CONFIGURED = API_KEY ~= '' and API_KEY ~= 'change_this_fivem_secret'
 local connectingQueue = {}
 local queueSerial = 0
+local spectateCaptureInFlight = {}
+local SPECTATE_FRAME_INTERVAL_MS = 33
 
 local function apiUrl(path)
     return DASHBOARD_URL .. path
@@ -20,6 +22,7 @@ end
 
 local function postSpectateFrame(sessionId, image, errorMessage)
     PerformHttpRequest(apiUrl('/fivem/spectate/frame'), function(status, body, _, errorData)
+        spectateCaptureInFlight[tostring(sessionId)] = nil
         if status ~= 200 then
             print(('[Unova Dashboard] Spectate frame failed: status=%s error=%s body=%s'):format(tostring(status), tostring(errorData or 'none'), tostring(body or '')))
         end
@@ -296,7 +299,7 @@ local function requestScreenshotFromResource(resourceName, target, cb)
     return pcall(function()
         exports[resourceName]:requestClientScreenshot(tonumber(target) or target, {
             encoding = 'jpg',
-            quality = 0.55
+            quality = 0.38
         }, function(first, second)
             local errorMessage = nil
             local image = nil
@@ -318,18 +321,24 @@ local function requestScreenshotFromResource(resourceName, target, cb)
 end
 
 local function captureSpectateFrame(request)
+    local sessionId = tostring(request.sessionId or '')
+    if sessionId == '' or spectateCaptureInFlight[sessionId] then
+        return
+    end
+    spectateCaptureInFlight[sessionId] = true
+
     local target = request.playerId and GetPlayerName(tostring(request.playerId)) and tostring(request.playerId) or nil
     if not target then
-        postSpectateFrame(request.sessionId, nil, 'Target player is not online.')
+        postSpectateFrame(sessionId, nil, 'Target player is not online.')
         return
     end
 
     local function done(errorMessage, image)
         if errorMessage then
-            postSpectateFrame(request.sessionId, nil, tostring(errorMessage))
+            postSpectateFrame(sessionId, nil, tostring(errorMessage))
             return
         end
-        postSpectateFrame(request.sessionId, image, nil)
+        postSpectateFrame(sessionId, image, nil)
     end
 
     local ok = requestScreenshotFromResource('screenshot', target, done)
@@ -338,7 +347,7 @@ local function captureSpectateFrame(request)
     ok = requestScreenshotFromResource('screenshot-basic', target, done)
     if ok then return end
 
-    postSpectateFrame(request.sessionId, nil, 'No screenshot resource export found.')
+    postSpectateFrame(sessionId, nil, 'No screenshot resource export found.')
 end
 
 local function pollSpectateRequests()
@@ -841,6 +850,6 @@ end)
 CreateThread(function()
     while true do
         pollSpectateRequests()
-        Wait(1200)
+        Wait(SPECTATE_FRAME_INTERVAL_MS)
     end
 end)

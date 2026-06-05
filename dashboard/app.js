@@ -58,6 +58,7 @@ let selectedPlayer = null;
 let refreshTimer = null;
 let spectateTimer = null;
 let spectateSessionId = null;
+let spectatePollInFlight = false;
 let firebaseAuth = null;
 let dashboardUser = null;
 
@@ -348,22 +349,28 @@ function renderTickets(tickets) {
 }
 
 async function pollSpectateFrame() {
-  if (!spectateSessionId) return;
-  const response = await api(`/dashboard/spectate/${spectateSessionId}`).catch(() => null);
-  if (!response || !response.ok) {
-    spectateStatus.textContent = 'Spectate feed unavailable.';
-    return;
-  }
+  if (!spectateSessionId || spectatePollInFlight) return;
+  spectatePollInFlight = true;
 
-  const data = await response.json();
-  const session = data.session || {};
-  if (session.image) {
-    spectateImage.src = session.image;
-    spectateStatus.textContent = `Viewing ${session.playerName || 'player'}${session.updatedAt ? ` | ${new Date(session.updatedAt).toLocaleTimeString()}` : ''}`;
-  } else if (session.error) {
-    spectateStatus.textContent = session.error;
-  } else {
-    spectateStatus.textContent = 'Waiting for screenshot feed.';
+  try {
+    const response = await api(`/dashboard/spectate/${spectateSessionId}`).catch(() => null);
+    if (!response || !response.ok) {
+      spectateStatus.textContent = 'Spectate feed unavailable.';
+      return;
+    }
+
+    const data = await response.json();
+    const session = data.session || {};
+    if (session.image) {
+      spectateImage.src = session.image;
+      spectateStatus.textContent = `Viewing ${session.playerName || 'player'}${session.updatedAt ? ` | ${new Date(session.updatedAt).toLocaleTimeString()}` : ''}`;
+    } else if (session.error) {
+      spectateStatus.textContent = session.error;
+    } else {
+      spectateStatus.textContent = 'Waiting for screenshot feed.';
+    }
+  } finally {
+    spectatePollInFlight = false;
   }
 }
 
@@ -374,6 +381,7 @@ async function stopWebsiteSpectate() {
     await api(`/dashboard/spectate/${spectateSessionId}/stop`, { method: 'POST' }).catch(() => null);
   }
   spectateSessionId = null;
+  spectatePollInFlight = false;
   spectatePanel.classList.add('hidden');
   spectateImage.removeAttribute('src');
 }
@@ -397,7 +405,7 @@ async function startWebsiteSpectate(player) {
 
   const data = await response.json();
   spectateSessionId = data.session?.id;
-  spectateTimer = setInterval(pollSpectateFrame, 1250);
+  spectateTimer = setInterval(pollSpectateFrame, 33.33);
   await pollSpectateFrame();
 }
 

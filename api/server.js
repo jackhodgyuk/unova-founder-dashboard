@@ -57,6 +57,7 @@ const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
 const defaultDiscordLogChannelId = '1451550213595467889';
 const defaultAnnouncementChannelId = '1450774864427352175';
+const spectateFrameIntervalMs = 33.33;
 const announcementTagRoleIds = new Set([
   '1450651506930880516',
   '1483451364703998005',
@@ -1227,6 +1228,7 @@ function publicSpectateSession(session) {
     playerName: session.playerName,
     active: session.active,
     pending: session.pending,
+    frameIntervalMs: session.frameIntervalMs || spectateFrameIntervalMs,
     image: session.image || null,
     error: session.error || null,
     updatedAt: session.updatedAt || null
@@ -1818,12 +1820,15 @@ async function handleRequest(req, res) {
     const requests = [];
     for (const session of Object.values(state.spectateSessions)) {
       if (!session.active || session.pending) continue;
+      if (session.lastRequestAtMs && now - session.lastRequestAtMs < (session.frameIntervalMs || spectateFrameIntervalMs)) continue;
       session.pending = true;
+      session.lastRequestAtMs = now;
       session.requestedAtMs = now;
       requests.push({
         sessionId: session.id,
         playerId: session.playerId,
-        playerName: session.playerName
+        playerName: session.playerName,
+        frameIntervalMs: session.frameIntervalMs || spectateFrameIntervalMs
       });
     }
     sendJson(res, 200, { requests });
@@ -2051,6 +2056,8 @@ async function handleRequest(req, res) {
       requesterUid: user.uid,
       active: true,
       pending: false,
+      frameIntervalMs: spectateFrameIntervalMs,
+      lastRequestAtMs: 0,
       image: null,
       error: null,
       createdAtMs: now,
