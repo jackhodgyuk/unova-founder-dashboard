@@ -1332,12 +1332,18 @@ async function claimTicket(channel, guild, member, user) {
 }
 
 async function handleTicketClaim(interaction) {
-  const result = await claimTicket(interaction.channel, interaction.guild, interaction.member, interaction.user);
-  return interaction.reply({
-    content: result.message,
-    flags: MessageFlags.Ephemeral,
-    allowedMentions: { users: [], roles: [] }
-  });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  try {
+    const result = await claimTicket(interaction.channel, interaction.guild, interaction.member, interaction.user);
+    return interaction.editReply({
+      content: result.message,
+      allowedMentions: { users: [], roles: [] }
+    });
+  } catch (error) {
+    console.warn(`[Unova Bot] Ticket claim failed in ${interaction.channelId}: ${error.message}`);
+    return interaction.editReply('Ticket claim failed. Check my channel and role permissions, then try again.');
+  }
 }
 
 function higherManagementAttentionEmbed(nextLevel, actor) {
