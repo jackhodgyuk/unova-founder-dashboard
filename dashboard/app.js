@@ -51,6 +51,9 @@ const founderLoaForm = document.getElementById('founderLoaForm');
 const loaMemberSelect = document.getElementById('loaMemberSelect');
 const founderLoaNotice = document.getElementById('founderLoaNotice');
 const founderLoaSubmitButton = document.getElementById('founderLoaSubmitButton');
+const loaRequestForm = document.getElementById('loaRequestForm');
+const loaRequestNotice = document.getElementById('loaRequestNotice');
+const loaRequestSubmitButton = document.getElementById('loaRequestSubmitButton');
 const pendingLoaList = document.getElementById('pendingLoaList');
 const loaList = document.getElementById('loaList');
 const displayNameInput = document.getElementById('displayName');
@@ -193,6 +196,7 @@ function renderStatus(data) {
     founderSettingsPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
     founderCleanupPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
     founderLoaForm?.classList.toggle('hidden', dashboardUser.role !== 'founder');
+    loaRequestForm?.classList.toggle('hidden', !dashboardUser.role || dashboardUser.role === 'founder');
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
@@ -405,9 +409,10 @@ function renderLoas(loas, pendingLoas = []) {
         item.innerHTML = [
           '<span class="badge loa pending">Pending</span>',
           `<span><b>${escapeHtml(loa.displayName || 'Unova Management')}</b> <small>${escapeHtml(loa.reason || 'No reason provided')}</small></span>`,
-          `<span><button type="button">Approve</button><small>${escapeHtml(loa.from || '')} to ${escapeHtml(loa.to || '')}</small></span>`
+          `<span class="loa-decision-actions"><button type="button" data-loa-action="approve">Approve</button><button type="button" data-loa-action="decline">Decline</button><small>${escapeHtml(loa.from || '')} to ${escapeHtml(loa.to || '')}</small></span>`
         ].join('');
-        item.querySelector('button').addEventListener('click', () => approveLoa(loa.discordId));
+        item.querySelector('[data-loa-action="approve"]').addEventListener('click', () => decideLoa(loa.discordId, 'approve'));
+        item.querySelector('[data-loa-action="decline"]').addEventListener('click', () => decideLoa(loa.discordId, 'decline'));
         pendingLoaList.appendChild(item);
       }
     }
@@ -430,9 +435,9 @@ function renderLoas(loas, pendingLoas = []) {
   }
 }
 
-async function approveLoa(discordId) {
+async function decideLoa(discordId, decision) {
   if (dashboardUser?.role !== 'founder') return;
-  const response = await api('/dashboard/loas/approve', {
+  const response = await api(`/dashboard/loas/${decision}`, {
     method: 'POST',
     body: JSON.stringify({ discordId })
   }).catch(() => null);
@@ -727,6 +732,32 @@ founderLoaForm?.addEventListener('submit', async (event) => {
     founderLoaNotice.textContent = error.message || 'Could not create LOA.';
   } finally {
     founderLoaSubmitButton.disabled = false;
+  }
+});
+
+loaRequestForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!dashboardUser?.role || dashboardUser.role === 'founder') return;
+
+  loaRequestNotice.textContent = 'Submitting LOA request...';
+  loaRequestSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(loaRequestForm));
+    const response = await api('/dashboard/loas/request', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not submit LOA request.');
+
+    loaRequestForm.reset();
+    loaRequestNotice.textContent = 'LOA request submitted for founder approval.';
+    await loadStatus();
+  } catch (error) {
+    loaRequestNotice.textContent = error.message || 'Could not submit LOA request.';
+  } finally {
+    loaRequestSubmitButton.disabled = false;
   }
 });
 

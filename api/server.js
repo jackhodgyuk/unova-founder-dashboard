@@ -808,6 +808,23 @@ async function patchDiscord(token, route, body) {
   return discordRequest('PATCH', token, route, body);
 }
 
+async function sendDiscordDm(userId, content) {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const recipientId = cleanId(userId);
+  if (!token || !recipientId || !content) return null;
+
+  try {
+    const channel = await postDiscord(token, '/users/@me/channels', { recipient_id: recipientId });
+    return await postDiscord(token, `/channels/${channel.id}/messages`, {
+      content: String(content).slice(0, 1900),
+      allowed_mentions: { parse: [] }
+    });
+  } catch (error) {
+    console.warn(`[Unova API] LOA DM failed: ${error.response?.data?.message || error.message}`);
+    return null;
+  }
+}
+
 async function fetchDiscordRoles(token, guildId) {
   return getDiscord(token, `/guilds/${guildId}/roles`);
 }
@@ -1416,7 +1433,7 @@ function normalizeLoa(value) {
   if (!discordId || !from || !to || from > to) return null;
 
   const rawStatus = String(value.status || 'pending').trim().toLowerCase();
-  const status = ['pending', 'active', 'cancelled'].includes(rawStatus) ? rawStatus : 'pending';
+  const status = ['pending', 'active', 'cancelled', 'declined'].includes(rawStatus) ? rawStatus : 'pending';
   return {
     id: discordId,
     discordId,
@@ -1426,7 +1443,16 @@ function normalizeLoa(value) {
     reason: String(value.reason || '').trim().slice(0, 500),
     status,
     createdAt: value.createdAt || new Date().toISOString(),
-    updatedAt: value.updatedAt || new Date().toISOString()
+    updatedAt: value.updatedAt || new Date().toISOString(),
+    requestedBy: value.requestedBy || null,
+    requestedByName: value.requestedByName || null,
+    approvedBy: value.approvedBy || null,
+    approvedByName: value.approvedByName || null,
+    approvedAt: value.approvedAt || null,
+    declinedBy: value.declinedBy || null,
+    declinedByName: value.declinedByName || null,
+    declinedAt: value.declinedAt || null,
+    createdByFounder: value.createdByFounder === true
   };
 }
 
@@ -2246,6 +2272,57 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'POST' && pathname === '/dashboard/loas/request') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'staff')) return;
+    if (user.role === 'founder') {
+      sendJson(res, 403, { error: 'Founder can create approved LOAs instead.' });
+      return;
+    }
+
+    const discordId = cleanId(user.discordId);
+    if (!discordId) {
+      sendJson(res, 400, { error: 'Your dashboard account needs a Discord ID before you can request LOA.' });
+      return;
+    }
+
+    const body = await readBody(req);
+    const from = normalizeDateOnly(body.from || body.dateFrom);
+    const to = normalizeDateOnly(body.to || body.dateTo);
+    if (!from || !to || from > to) {
+      sendJson(res, 400, { error: 'Valid from and to dates are required.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const loa = {
+      id: discordId,
+      discordId,
+      displayName: String(user.name || body.displayName || 'Unova Management').trim().slice(0, 120),
+      from,
+      to,
+      reason: String(body.reason || '').trim().slice(0, 500),
+      status: 'pending',
+      createdAt: now,
+      updatedAt: now,
+      requestedBy: user.uid,
+      requestedByName: user.name || user.uid
+    };
+
+    state.loas = (await getLoas()).filter((item) => item.discordId !== loa.discordId);
+    state.loas.unshift(loa);
+    await savePersistentState();
+    await updateDiscordLoaStatusMessage();
+    await logDiscordAction([
+      '**LOA Requested From Dashboard**',
+      `Member: <@${loa.discordId}>`,
+      `Dates: ${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ]);
+    sendJson(res, 200, { ok: true, loa, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/dashboard/loas/approve') {
     const user = await requireDashboardUser(req, res);
     if (!user || !requireDashboardRole(user, res, 'founder')) return;
@@ -2278,7 +2355,59 @@ async function handleRequest(req, res) {
       `Dates: ${approved.from} to ${approved.to}`,
       approved.reason ? `Reason: ${approved.reason}` : null
     ]);
+    await sendDiscordDm(
+      approved.discordId,
+      [
+        'Your Unova Management LOA has been approved.',
+        `Dates: ${approved.from} to ${approved.to}`,
+        approved.reason ? `Reason: ${approved.reason}` : null
+      ].filter(Boolean).join('\n')
+    );
     sendJson(res, 200, { ok: true, loa: approved, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/loas/decline') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId || body.userId);
+    if (!discordId) {
+      sendJson(res, 400, { error: 'Valid Discord user ID is required.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    let declined = null;
+    state.loas = (await getLoas()).map((loa) => {
+      if (loa.discordId !== discordId || loa.status !== 'pending') return loa;
+      declined = { ...loa, status: 'declined', declinedBy: user.uid, declinedByName: user.name || 'Founder', declinedAt: now, updatedAt: now };
+      return declined;
+    });
+    if (!declined) {
+      sendJson(res, 404, { error: 'No pending LOA was found for that user.' });
+      return;
+    }
+
+    await savePersistentState();
+    await updateDiscordLoaStatusMessage();
+    await logDiscordAction([
+      '**LOA Declined**',
+      `Founder: ${user.name || user.uid}`,
+      `Member: <@${declined.discordId}>`,
+      `Dates: ${declined.from} to ${declined.to}`,
+      declined.reason ? `Reason: ${declined.reason}` : null
+    ]);
+    await sendDiscordDm(
+      declined.discordId,
+      [
+        'Your Unova Management LOA has been declined.',
+        `Dates: ${declined.from} to ${declined.to}`,
+        declined.reason ? `Reason: ${declined.reason}` : null
+      ].filter(Boolean).join('\n')
+    );
+    sendJson(res, 200, { ok: true, loa: declined, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 

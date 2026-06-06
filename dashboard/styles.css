@@ -744,6 +744,17 @@ button {
   color: var(--muted);
 }
 
+.loa-decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.loa-decision-actions small {
+  flex-basis: 100%;
+}
+
 .priority-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

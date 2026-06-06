@@ -238,6 +238,23 @@
               <button id="founderLoaSubmitButton" type="submit">Create LOA</button>
               <p id="founderLoaNotice" class="form-notice"></p>
             </form>
+            <form id="loaRequestForm" class="config-panel loa-create-panel hidden">
+              <h4>Request LOA</h4>
+              <div class="form-grid">
+                <div>
+                  <label for="requestLoaFrom">From</label>
+                  <input id="requestLoaFrom" name="from" type="date" required>
+                </div>
+                <div>
+                  <label for="requestLoaTo">To</label>
+                  <input id="requestLoaTo" name="to" type="date" required>
+                </div>
+              </div>
+              <label for="requestLoaReason">Reason</label>
+              <textarea id="requestLoaReason" name="reason" rows="3" placeholder="Optional"></textarea>
+              <button id="loaRequestSubmitButton" type="submit">Submit LOA Request</button>
+              <p id="loaRequestNotice" class="form-notice"></p>
+            </form>
             <div id="pendingLoaList" class="actions-list loa-section"></div>
             <div id="loaList" class="actions-list"></div>
           </section>
