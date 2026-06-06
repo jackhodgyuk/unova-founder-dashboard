@@ -77,6 +77,7 @@ const state = {
   priorityRules: [],
   priorityOverrides: [],
   openTickets: [],
+  loas: [],
   stateLoaded: false,
   stateLoadPromise: null,
   firebaseCerts: null,
@@ -143,6 +144,7 @@ function persistentStatePayload() {
     priorityRules: state.priorityRules,
     priorityOverrides: state.priorityOverrides,
     openTickets: state.openTickets,
+    loas: state.loas,
     savedAt: new Date().toISOString()
   };
 }
@@ -177,6 +179,7 @@ async function ensureStateLoaded() {
         state.priorityRules = Array.isArray(stored.priorityRules) ? stored.priorityRules.map(normalizePriorityRule).filter(Boolean) : [];
         state.priorityOverrides = Array.isArray(stored.priorityOverrides) ? stored.priorityOverrides.map(normalizePriorityOverride).filter(Boolean) : [];
         state.openTickets = Array.isArray(stored.openTickets) ? stored.openTickets.map(normalizeOpenTicket).filter(Boolean) : [];
+        state.loas = Array.isArray(stored.loas) ? stored.loas.map(normalizeLoa).filter(Boolean) : [];
       }
 
       if (!state.priorityRules.length) {
@@ -1213,6 +1216,54 @@ function normalizePriorityOverride(value) {
   };
 }
 
+function normalizeDateOnly(value) {
+  const clean = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return null;
+  const date = new Date(`${clean}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  return clean;
+}
+
+function todayDateOnly() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeLoa(value) {
+  const discordId = cleanId(value.discordId || value.userId);
+  const from = normalizeDateOnly(value.from || value.dateFrom);
+  const to = normalizeDateOnly(value.to || value.dateTo);
+  if (!discordId || !from || !to || from > to) return null;
+
+  const status = String(value.status || 'active').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'active';
+  return {
+    id: discordId,
+    discordId,
+    displayName: String(value.displayName || value.name || 'Unova Management').trim().slice(0, 120),
+    from,
+    to,
+    reason: String(value.reason || '').trim().slice(0, 500),
+    status,
+    createdAt: value.createdAt || new Date().toISOString(),
+    updatedAt: value.updatedAt || new Date().toISOString()
+  };
+}
+
+async function getLoas() {
+  await ensureStateLoaded();
+  return state.loas.map(normalizeLoa).filter(Boolean);
+}
+
+function activeLoasFrom(records) {
+  const today = todayDateOnly();
+  return records
+    .filter((loa) => loa.status === 'active' && loa.to >= today)
+    .sort((a, b) => a.to.localeCompare(b.to) || a.from.localeCompare(b.from) || a.displayName.localeCompare(b.displayName));
+}
+
+async function getActiveLoas() {
+  return activeLoasFrom(await getLoas());
+}
+
 function cleanupSpectateSessions() {
   const now = Date.now();
   for (const [sessionId, session] of Object.entries(state.spectateSessions)) {
@@ -1697,6 +1748,41 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/internal/loas') {
+    if (!requireInternal(req, res)) return;
+    sendJson(res, 200, { loas: await getLoas(), activeLoas: await getActiveLoas() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/loas/upsert') {
+    if (!requireInternal(req, res)) return;
+    const loa = normalizeLoa(await readBody(req));
+    if (!loa) {
+      sendJson(res, 400, { error: 'Valid LOA user, from date, and to date are required.' });
+      return;
+    }
+    state.loas = (await getLoas()).filter((item) => item.discordId !== loa.discordId);
+    state.loas.unshift({ ...loa, status: 'active', updatedAt: new Date().toISOString() });
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, loa, activeLoas: await getActiveLoas() });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/loas/cancel') {
+    if (!requireInternal(req, res)) return;
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId || body.userId);
+    if (!discordId) {
+      sendJson(res, 400, { error: 'Valid Discord user ID is required.' });
+      return;
+    }
+    const now = new Date().toISOString();
+    state.loas = (await getLoas()).map((loa) => loa.discordId === discordId ? { ...loa, status: 'cancelled', updatedAt: now } : loa);
+    await savePersistentState();
+    sendJson(res, 200, { ok: true, activeLoas: await getActiveLoas() });
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/internal/city/notify') {
     if (!requireInternal(req, res)) return;
     const body = await readBody(req);
@@ -1889,7 +1975,8 @@ async function handleRequest(req, res) {
       players: fivem.players || [],
       queueLength: state.moderationQueue.length,
       recentActions: state.recentModerationActions,
-      openTickets: hasDashboardRoleAtLeast(user, 'co_owner') ? await activeTickets() : []
+      openTickets: hasDashboardRoleAtLeast(user, 'co_owner') ? await activeTickets() : [],
+      loas: await getActiveLoas()
     });
     return;
   }

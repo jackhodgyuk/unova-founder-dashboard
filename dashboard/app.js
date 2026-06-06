@@ -32,6 +32,7 @@ const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
 const announcementsView = document.getElementById('announcementsView');
 const ticketsView = document.getElementById('ticketsView');
+const loaView = document.getElementById('loaView');
 const priorityView = document.getElementById('priorityView');
 const settingsView = document.getElementById('settingsView');
 const announcementsNavButton = document.getElementById('announcementsNavButton');
@@ -46,6 +47,7 @@ const priorityRulesList = document.getElementById('priorityRulesList');
 const priorityOverridesList = document.getElementById('priorityOverridesList');
 const ticketsNavButton = document.getElementById('ticketsNavButton');
 const ticketsList = document.getElementById('ticketsList');
+const loaList = document.getElementById('loaList');
 const displayNameInput = document.getElementById('displayName');
 const announcementForm = document.getElementById('announcementForm');
 const announcementNotice = document.getElementById('announcementNotice');
@@ -213,6 +215,7 @@ function renderStatus(data) {
   renderPlayers();
   renderActions(data.recentActions || []);
   renderTickets(data.openTickets || []);
+  renderLoas(data.loas || []);
 }
 
 function renderPriority(data) {
@@ -345,6 +348,26 @@ function renderTickets(tickets) {
       `<span><a href="${link}" target="_blank" rel="noreferrer">Open</a></span>`
     ].join('');
     ticketsList.appendChild(item);
+  }
+}
+
+function renderLoas(loas) {
+  loaList.innerHTML = '';
+
+  if (!loas.length) {
+    loaList.innerHTML = '<div class="action-item muted"><span></span><span>No active LOAs.</span><span></span></div>';
+    return;
+  }
+
+  for (const loa of loas) {
+    const item = document.createElement('div');
+    item.className = 'action-item';
+    item.innerHTML = [
+      '<span class="badge loa">LOA</span>',
+      `<span><b>${escapeHtml(loa.displayName || 'Unova Management')}</b> <small>${escapeHtml(loa.reason || 'No reason provided')}</small></span>`,
+      `<span class="muted">${escapeHtml(loa.from || '')} to ${escapeHtml(loa.to || '')}</span>`
+    ].join('');
+    loaList.appendChild(item);
   }
 }
 
@@ -605,6 +628,7 @@ document.querySelectorAll('.nav button').forEach((button) => {
     actionsView.classList.toggle('hidden', view !== 'actions');
     announcementsView.classList.toggle('hidden', view !== 'announcements');
     ticketsView.classList.toggle('hidden', view !== 'tickets');
+    loaView.classList.toggle('hidden', view !== 'loa');
     priorityView.classList.toggle('hidden', view !== 'priority');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();

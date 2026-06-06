@@ -42,6 +42,7 @@ const goldPrioRoleId = process.env.GOLD_PRIO_ROLE_ID || '1481664094661644308';
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const defaultLogChannelId = '1451550213595467889';
 const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID || '1450604376505974897';
+const loaChannelId = process.env.DISCORD_LOA_CHANNEL_ID || '1512627150623080551';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
 let whitelistChannelId = process.env.DISCORD_WHITELIST_CHANNEL_ID;
 const unovaLogoUrl = 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG';
@@ -427,6 +428,14 @@ function blockedProtectedMentions(message) {
 async function postDashboardInternal(path, body) {
   if (!process.env.FIVEM_API_KEY) return null;
   return axios.post(`${dashboardUrl}${path}`, body, {
+    headers: { 'x-api-key': process.env.FIVEM_API_KEY },
+    timeout: 5000
+  }).catch(() => null);
+}
+
+async function getDashboardInternal(path) {
+  if (!process.env.FIVEM_API_KEY) return null;
+  return axios.get(`${dashboardUrl}${path}`, {
     headers: { 'x-api-key': process.env.FIVEM_API_KEY },
     timeout: 5000
   }).catch(() => null);
@@ -1049,6 +1058,104 @@ function pullPlayerModal() {
     );
 }
 
+function loaPanelRows() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('loa_submit')
+        .setLabel('Submit LOA')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('loa_cancel')
+        .setLabel('Cancel My LOA')
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
+}
+
+function loaModal() {
+  return new ModalBuilder()
+    .setCustomId('loa_modal')
+    .setTitle('Submit LOA')
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('loa_from')
+          .setLabel('Date from')
+          .setPlaceholder('YYYY-MM-DD')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('loa_to')
+          .setLabel('Date to')
+          .setPlaceholder('YYYY-MM-DD')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId('loa_reason')
+          .setLabel('Reason')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false)
+      )
+    );
+}
+
+function isValidLoaDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
+}
+
+function activeLoaEmbed(activeLoas) {
+  const description = activeLoas.length
+    ? activeLoas.slice(0, 20).map((loa, index) => [
+      `**${index + 1}. ${loa.displayName || 'Unova Management'}**`,
+      `<@${loa.discordId}>`,
+      `${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ].filter(Boolean).join('\n')).join('\n\n') + (activeLoas.length > 20 ? `\n\n…and ${activeLoas.length - 20} more active LOAs on the dashboard.` : '')
+    : 'No active LOAs right now.';
+
+  return {
+    color: 2807784,
+    title: 'Active LOA',
+    description,
+    thumbnail: { url: unovaLogoUrl },
+    footer: { text: 'Unova Management LOA' },
+    timestamp: new Date().toISOString()
+  };
+}
+
+async function fetchActiveLoas() {
+  const response = await getDashboardInternal('/internal/loas');
+  return response?.data?.activeLoas || [];
+}
+
+async function findActiveLoaMessage(channel) {
+  const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!messages) return null;
+  return messages.find((message) =>
+    message.author.id === client.user.id
+    && message.embeds.some((embed) => embed.title === 'Active LOA')
+  ) || null;
+}
+
+async function updateLoaStatusEmbed(guild) {
+  const channel = await guild.channels.fetch(cleanId(loaChannelId)).catch(() => null);
+  if (!channel || !channel.isTextBased()) return null;
+
+  const activeLoas = await fetchActiveLoas();
+  const embed = activeLoaEmbed(activeLoas);
+  const message = await findActiveLoaMessage(channel);
+  if (message) {
+    await message.edit({ embeds: [embed] }).catch(() => null);
+    return message;
+  }
+  return channel.send({ embeds: [embed] }).catch(() => null);
+}
+
 function roleGrantDefinitions() {
   return [
     { key: 'business_owner', label: 'Business Owner', roleId: businessOwnerRoleId, seniorOnly: false },
@@ -1669,6 +1776,9 @@ async function registerSlashCommands(readyClient) {
         subcommand.setName('whitelist').setDescription('Post the whitelist and role management dropdown panel.')
       )
       .addSubcommand((subcommand) =>
+        subcommand.setName('loa').setDescription('Post the LOA request panel.')
+      )
+      .addSubcommand((subcommand) =>
         subcommand.setName('settings').setDescription('Show the current ticket role settings.')
       ),
     new SlashCommandBuilder()
@@ -1882,11 +1992,19 @@ client.once(Events.ClientReady, async (readyClient) => {
     await checkInactiveTickets(guild).catch((error) => {
       console.warn(`[Unova Bot] Inactive ticket check failed: ${error.message}`);
     });
+    await updateLoaStatusEmbed(guild).catch((error) => {
+      console.warn(`[Unova Bot] LOA status update failed: ${error.message}`);
+    });
     setInterval(() => {
       checkInactiveTickets(guild).catch((error) => {
         console.warn(`[Unova Bot] Inactive ticket check failed: ${error.message}`);
       });
     }, 10 * 60 * 1000);
+    setInterval(() => {
+      updateLoaStatusEmbed(guild).catch((error) => {
+        console.warn(`[Unova Bot] LOA status update failed: ${error.message}`);
+      });
+    }, 30 * 60 * 1000);
   }
 });
 
@@ -1955,6 +2073,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({ content: 'Staff and above only.', flags: MessageFlags.Ephemeral });
       }
       return interaction.showModal(pullPlayerModal());
+    }
+
+    if (interaction.customId === 'loa_submit') {
+      if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+        return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+      }
+      return interaction.showModal(loaModal());
+    }
+
+    if (interaction.customId === 'loa_cancel') {
+      if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+        return interaction.reply({ content: 'Management only.', flags: MessageFlags.Ephemeral });
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await postDashboardInternal('/internal/loas/cancel', { discordId: interaction.user.id });
+      await updateLoaStatusEmbed(interaction.guild);
+      await logToStaff(`LOA cancelled: <@${interaction.user.id}> cancelled their active LOA.`);
+      return interaction.editReply('Your LOA has been cancelled.');
     }
 
     if (interaction.customId === 'ticket_inactive_keep' || interaction.customId === 'ticket_inactive_close') {
@@ -2146,6 +2282,36 @@ client.on(Events.InteractionCreate, async (interaction) => {
       status: 'open'
     });
     return interaction.editReply(`Player report opened: ${channel}`);
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'loa_modal') {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    if (!memberHasManagementRankAccess(interaction.member, interaction.user.id)) {
+      return interaction.editReply('Management only.');
+    }
+
+    const from = interaction.fields.getTextInputValue('loa_from').trim();
+    const to = interaction.fields.getTextInputValue('loa_to').trim();
+    const reason = interaction.fields.getTextInputValue('loa_reason').trim();
+    if (!isValidLoaDate(from) || !isValidLoaDate(to) || from > to) {
+      return interaction.editReply('Use valid dates in `YYYY-MM-DD` format. The end date must be the same day or after the start date.');
+    }
+
+    const displayName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
+    const response = await postDashboardInternal('/internal/loas/upsert', {
+      discordId: interaction.user.id,
+      displayName,
+      from,
+      to,
+      reason
+    });
+    if (!response?.data?.ok) {
+      return interaction.editReply('Could not save your LOA. Check the Cloud Run API key and try again.');
+    }
+
+    await updateLoaStatusEmbed(interaction.guild);
+    await logToStaff(`LOA added: <@${interaction.user.id}> from ${from} to ${to}${reason ? ` reason: ${reason}` : ''}.`);
+    return interaction.editReply(`Your LOA has been added from ${from} to ${to}.`);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'pull_player_modal') {
@@ -2376,6 +2542,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
         components: [row]
       });
       return interaction.reply({ content: 'Role management panel posted.', flags: MessageFlags.Ephemeral });
+    }
+
+    if (subcommand === 'loa') {
+      const channel = await interaction.guild.channels.fetch(cleanId(loaChannelId)).catch(() => null);
+      if (!channel || !channel.isTextBased()) {
+        return interaction.reply({ content: 'LOA channel could not be found.', flags: MessageFlags.Ephemeral });
+      }
+
+      await channel.send({
+        embeds: [{
+          color: 2807784,
+          title: 'Unova LOA Panel',
+          description: 'Use this panel when you need time away from duties. Select your dates and add a reason if needed.',
+          thumbnail: { url: unovaLogoUrl },
+          footer: { text: 'Unova Management' }
+        }],
+        components: loaPanelRows()
+      });
+      await updateLoaStatusEmbed(interaction.guild);
+      return interaction.reply({ content: `LOA panel posted in <#${loaChannelId}>.`, flags: MessageFlags.Ephemeral });
     }
 
     if (subcommand === 'settings') {

@@ -36,6 +36,10 @@
             <span class="nav-icon">T</span>
             <span>Tickets</span>
           </button>
+          <button id="loaNavButton" type="button" data-view="loa">
+            <span class="nav-icon">L</span>
+            <span>LOA</span>
+          </button>
           <button type="button" data-view="priority">
             <span class="nav-icon">Q</span>
             <span>Priority</span>
@@ -206,6 +210,14 @@
               <span>Owners, co-owners, founders</span>
             </div>
             <div id="ticketsList" class="actions-list"></div>
+          </section>
+
+          <section id="loaView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Active LOA</h3>
+              <span>Time away from duties</span>
+            </div>
+            <div id="loaList" class="actions-list"></div>
           </section>
 
           <section id="priorityView" class="actions-view hidden">
