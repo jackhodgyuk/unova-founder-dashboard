@@ -726,6 +726,11 @@ button {
   margin-bottom: 14px;
 }
 
+.loa-create-panel {
+  max-width: 720px;
+  margin-bottom: 14px;
+}
+
 .action-item button {
   min-height: 34px;
   padding: 0 12px;

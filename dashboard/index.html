@@ -217,6 +217,27 @@
               <h3>LOA</h3>
               <span>Time away from duties</span>
             </div>
+            <form id="founderLoaForm" class="config-panel loa-create-panel hidden">
+              <h4>Create Approved LOA</h4>
+              <label for="loaMemberSelect">Management Member</label>
+              <select id="loaMemberSelect" name="discordId" required>
+                <option value="">Loading management members...</option>
+              </select>
+              <div class="form-grid">
+                <div>
+                  <label for="loaFrom">From</label>
+                  <input id="loaFrom" name="from" type="date" required>
+                </div>
+                <div>
+                  <label for="loaTo">To</label>
+                  <input id="loaTo" name="to" type="date" required>
+                </div>
+              </div>
+              <label for="loaReason">Reason</label>
+              <textarea id="loaReason" name="reason" rows="3" placeholder="Optional"></textarea>
+              <button id="founderLoaSubmitButton" type="submit">Create LOA</button>
+              <p id="founderLoaNotice" class="form-notice"></p>
+            </form>
             <div id="pendingLoaList" class="actions-list loa-section"></div>
             <div id="loaList" class="actions-list"></div>
           </section>

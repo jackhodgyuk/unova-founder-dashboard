@@ -47,6 +47,10 @@ const priorityRulesList = document.getElementById('priorityRulesList');
 const priorityOverridesList = document.getElementById('priorityOverridesList');
 const ticketsNavButton = document.getElementById('ticketsNavButton');
 const ticketsList = document.getElementById('ticketsList');
+const founderLoaForm = document.getElementById('founderLoaForm');
+const loaMemberSelect = document.getElementById('loaMemberSelect');
+const founderLoaNotice = document.getElementById('founderLoaNotice');
+const founderLoaSubmitButton = document.getElementById('founderLoaSubmitButton');
 const pendingLoaList = document.getElementById('pendingLoaList');
 const loaList = document.getElementById('loaList');
 const displayNameInput = document.getElementById('displayName');
@@ -64,6 +68,7 @@ let spectateSessionId = null;
 let spectatePollInFlight = false;
 let firebaseAuth = null;
 let dashboardUser = null;
+let loaManagementMembersLoaded = false;
 
 function setAuthState(isAuthed) {
   shell.classList.toggle('locked', !isAuthed);
@@ -187,10 +192,12 @@ function renderStatus(data) {
       : 'Firebase Password Access';
     founderSettingsPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
     founderCleanupPanel.classList.toggle('hidden', dashboardUser.role !== 'founder');
+    founderLoaForm?.classList.toggle('hidden', dashboardUser.role !== 'founder');
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
     if (dashboardUser.role === 'founder') loadFirebaseUsers();
+    if (dashboardUser.role === 'founder') loadLoaManagementMembers();
   }
 
   const fivem = data.fivem || {};
@@ -349,6 +356,38 @@ function renderTickets(tickets) {
       `<span><a href="${link}" target="_blank" rel="noreferrer">Open</a></span>`
     ].join('');
     ticketsList.appendChild(item);
+  }
+}
+
+async function loadLoaManagementMembers(force = false) {
+  if (dashboardUser?.role !== 'founder' || !loaMemberSelect) return;
+  if (loaManagementMembersLoaded && !force) return;
+
+  loaMemberSelect.disabled = true;
+  loaMemberSelect.innerHTML = '<option value="">Loading management members...</option>';
+  founderLoaNotice.textContent = '';
+
+  try {
+    const response = await api('/dashboard/loas/management-members');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Could not load management members.');
+
+    const members = data.members || [];
+    loaMemberSelect.innerHTML = members.length
+      ? '<option value="">Select management member...</option>'
+      : '<option value="">No management members found</option>';
+    for (const member of members) {
+      const option = document.createElement('option');
+      option.value = member.discordId;
+      option.textContent = member.displayName || member.username || member.discordId;
+      loaMemberSelect.appendChild(option);
+    }
+    loaManagementMembersLoaded = true;
+  } catch (error) {
+    loaMemberSelect.innerHTML = '<option value="">Could not load management members</option>';
+    founderLoaNotice.textContent = error.message || 'Could not load management members.';
+  } finally {
+    loaMemberSelect.disabled = false;
   }
 }
 
@@ -661,7 +700,34 @@ document.querySelectorAll('.nav button').forEach((button) => {
     priorityView.classList.toggle('hidden', view !== 'priority');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();
+    if (view === 'loa') loadLoaManagementMembers();
   });
+});
+
+founderLoaForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (dashboardUser?.role !== 'founder') return;
+
+  founderLoaNotice.textContent = 'Creating approved LOA...';
+  founderLoaSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(founderLoaForm));
+    const response = await api('/dashboard/loas/create', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not create LOA.');
+
+    founderLoaForm.reset();
+    founderLoaNotice.textContent = 'LOA created and marked active.';
+    await loadStatus();
+  } catch (error) {
+    founderLoaNotice.textContent = error.message || 'Could not create LOA.';
+  } finally {
+    founderLoaSubmitButton.disabled = false;
+  }
 });
 
 announcementForm.addEventListener('submit', async (event) => {

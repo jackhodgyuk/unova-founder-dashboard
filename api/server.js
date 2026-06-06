@@ -609,6 +609,51 @@ function getStaffRoleIds() {
   );
 }
 
+function managementLadderRoleConfig() {
+  return {
+    management: {
+      ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
+      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES, 'Management', 'Unova Management']
+    },
+    staff: {
+      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
+      names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES, 'Staff']
+    },
+    senior_staff: {
+      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS],
+      names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES, 'Senior Staff']
+    },
+    staff_manager: {
+      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS],
+      names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES, 'Staff Manager']
+    },
+    server_manager: {
+      ids: [process.env.SERVER_MANAGER_ROLE_ID, process.env.SERVER_MANAGER_ROLE_IDS],
+      names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES, 'Server Manager']
+    },
+    co_owner: {
+      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS],
+      names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES, 'Co Owner', 'Co-Owner', 'Co Owner(s)', 'Co-Owners']
+    },
+    owner: {
+      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS],
+      names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES, 'Owner', 'Owners']
+    },
+    founder: {
+      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS],
+      names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES, 'Founder', 'Founders']
+    },
+    developer: {
+      ids: [process.env.DEVELOPER_ROLE_ID, process.env.DEVELOPER_ROLE_IDS, '1450751628956270644'],
+      names: [process.env.DEVELOPER_ROLE_NAME, process.env.DEVELOPER_ROLE_NAMES, 'Developer', 'Developers', 'Dev']
+    },
+    head_developer: {
+      ids: [process.env.HEAD_DEVELOPER_ROLE_ID, process.env.HEAD_DEVELOPER_ROLE_IDS, '1450778341371281563'],
+      names: [process.env.HEAD_DEVELOPER_ROLE_NAME, process.env.HEAD_DEVELOPER_ROLE_NAMES, 'Head Developer', 'Head Developers', 'Head Dev']
+    }
+  };
+}
+
 function cleanAction(value) {
   return ['warn', 'kick', 'ban', 'revive', 'down', 'spectate'].includes(value) ? value : null;
 }
@@ -813,6 +858,75 @@ async function resolveTicketCategoryId(token, guildId) {
 
 async function getDiscordMember(token, guildId, userId) {
   return getDiscord(token, `/guilds/${guildId}/members/${userId}`);
+}
+
+async function resolveManagementLadderRoleIds(token, guildId) {
+  const config = managementLadderRoleConfig();
+  const allIds = [];
+  const allNames = [];
+  for (const roleConfig of Object.values(config)) {
+    allIds.push(...roleConfig.ids);
+    allNames.push(...roleConfig.names);
+  }
+  return resolveConfiguredRoleIds(token, guildId, allIds, allNames);
+}
+
+async function fetchDiscordGuildMembers(token, guildId) {
+  const members = [];
+  let after = '0';
+  while (true) {
+    const page = await getDiscord(token, `/guilds/${guildId}/members?limit=1000&after=${after}`);
+    if (!Array.isArray(page) || !page.length) break;
+    members.push(...page);
+    after = page[page.length - 1]?.user?.id;
+    if (!after || page.length < 1000) break;
+  }
+  return members;
+}
+
+function publicDiscordMember(member) {
+  const user = member?.user || {};
+  const displayName = String(
+    member?.nick
+      || user.global_name
+      || user.username
+      || user.id
+      || 'Unova Management'
+  ).trim();
+  return {
+    discordId: cleanId(user.id),
+    displayName,
+    username: user.username || displayName
+  };
+}
+
+async function listManagementDiscordMembers() {
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!guildId || !token) return [];
+
+  const allowedRoleIds = await resolveManagementLadderRoleIds(token, guildId);
+  if (!allowedRoleIds.length) return [];
+
+  const members = await fetchDiscordGuildMembers(token, guildId);
+  return members
+    .filter((member) => !member?.user?.bot && hasAnyRole(member.roles || [], allowedRoleIds))
+    .map(publicDiscordMember)
+    .filter((member) => member.discordId)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+async function memberHasManagementLadderAccess(discordId) {
+  const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const userId = cleanId(discordId);
+  if (!userId || !guildId || !token) return false;
+
+  const member = await getDiscordMember(token, guildId, userId).catch(() => null);
+  if (!member) return false;
+
+  const allowedRoleIds = await resolveManagementLadderRoleIds(token, guildId);
+  return hasAnyRole(member.roles || [], allowedRoleIds);
 }
 
 async function memberHasManagementAccess(discordId) {
@@ -2060,6 +2174,75 @@ async function handleRequest(req, res) {
       pendingLoas: hasDashboardRoleAtLeast(user, 'founder') ? await getPendingLoas() : [],
       loas: await getActiveLoas()
     });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/loas/management-members') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    try {
+      sendJson(res, 200, { members: await listManagementDiscordMembers() });
+    } catch (error) {
+      console.warn(`[Unova API] LOA management member lookup failed: ${error.response?.data?.message || error.message}`);
+      sendJson(res, 500, { error: 'Could not load management members from Discord.' });
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/loas/create') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId || body.userId);
+    const from = normalizeDateOnly(body.from || body.dateFrom);
+    const to = normalizeDateOnly(body.to || body.dateTo);
+    if (!discordId || !from || !to || from > to) {
+      sendJson(res, 400, { error: 'Management member, from date, and to date are required.' });
+      return;
+    }
+
+    const hasManagement = await memberHasManagementLadderAccess(discordId);
+    if (!hasManagement) {
+      sendJson(res, 403, { error: 'That Discord member is not in a configured management role.' });
+      return;
+    }
+
+    const guildId = cleanId(process.env.DISCORD_GUILD_ID);
+    const token = process.env.DISCORD_BOT_TOKEN;
+    const member = guildId && token ? await getDiscordMember(token, guildId, discordId).catch(() => null) : null;
+    const publicMember = publicDiscordMember(member);
+    const now = new Date().toISOString();
+    const loa = {
+      id: discordId,
+      discordId,
+      displayName: String(body.displayName || publicMember.displayName || 'Unova Management').trim().slice(0, 120),
+      from,
+      to,
+      reason: String(body.reason || '').trim().slice(0, 500),
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+      approvedAt: now,
+      approvedBy: user.uid,
+      approvedByName: user.name || 'Founder',
+      createdByFounder: true
+    };
+
+    state.loas = (await getLoas()).filter((item) => item.discordId !== discordId);
+    state.loas.unshift(loa);
+    await savePersistentState();
+    await updateDiscordLoaStatusMessage();
+    await logDiscordAction([
+      '**LOA Created By Founder**',
+      `Founder: ${user.name || user.uid}`,
+      `Member: <@${loa.discordId}>`,
+      `Dates: ${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ]);
+
+    sendJson(res, 200, { ok: true, loa, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 
