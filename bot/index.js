@@ -1108,29 +1108,47 @@ function isValidLoaDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').trim());
 }
 
-function activeLoaEmbed(activeLoas) {
-  const description = activeLoas.length
+function loaStatusEmbed(pendingLoas, activeLoas) {
+  const pendingText = pendingLoas.length
+    ? pendingLoas.slice(0, 12).map((loa, index) => [
+      `**${index + 1}. ${loa.displayName || 'Unova Management'}**`,
+      `<@${loa.discordId}>`,
+      `${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ].filter(Boolean).join('\n')).join('\n\n') + (pendingLoas.length > 12 ? `\n\n…and ${pendingLoas.length - 12} more pending LOAs on the dashboard.` : '')
+    : 'No pending LOAs.';
+
+  const activeText = activeLoas.length
     ? activeLoas.slice(0, 20).map((loa, index) => [
       `**${index + 1}. ${loa.displayName || 'Unova Management'}**`,
       `<@${loa.discordId}>`,
       `${loa.from} to ${loa.to}`,
       loa.reason ? `Reason: ${loa.reason}` : null
     ].filter(Boolean).join('\n')).join('\n\n') + (activeLoas.length > 20 ? `\n\n…and ${activeLoas.length - 20} more active LOAs on the dashboard.` : '')
-    : 'No active LOAs right now.';
+    : 'No approved active LOAs.';
 
   return {
     color: 2807784,
-    title: 'Active LOA',
-    description,
+    title: 'LOA Status',
+    description: [
+      '**Pending Founder Approval**',
+      pendingText,
+      '',
+      '**Approved And Active**',
+      activeText
+    ].join('\n'),
     thumbnail: { url: unovaLogoUrl },
     footer: { text: 'Unova Management LOA' },
     timestamp: new Date().toISOString()
   };
 }
 
-async function fetchActiveLoas() {
+async function fetchLoaStatus() {
   const response = await getDashboardInternal('/internal/loas');
-  return response?.data?.activeLoas || [];
+  return {
+    pendingLoas: response?.data?.pendingLoas || [],
+    activeLoas: response?.data?.activeLoas || []
+  };
 }
 
 async function findActiveLoaMessage(channel) {
@@ -1138,7 +1156,7 @@ async function findActiveLoaMessage(channel) {
   if (!messages) return null;
   return messages.find((message) =>
     message.author.id === client.user.id
-    && message.embeds.some((embed) => embed.title === 'Active LOA')
+    && message.embeds.some((embed) => embed.title === 'LOA Status' || embed.title === 'Active LOA')
   ) || null;
 }
 
@@ -1146,8 +1164,8 @@ async function updateLoaStatusEmbed(guild) {
   const channel = await guild.channels.fetch(cleanId(loaChannelId)).catch(() => null);
   if (!channel || !channel.isTextBased()) return null;
 
-  const activeLoas = await fetchActiveLoas();
-  const embed = activeLoaEmbed(activeLoas);
+  const { pendingLoas, activeLoas } = await fetchLoaStatus();
+  const embed = loaStatusEmbed(pendingLoas, activeLoas);
   const message = await findActiveLoaMessage(channel);
   if (message) {
     await message.edit({ embeds: [embed] }).catch(() => null);
@@ -2310,8 +2328,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     await updateLoaStatusEmbed(interaction.guild);
-    await logToStaff(`LOA added: <@${interaction.user.id}> from ${from} to ${to}${reason ? ` reason: ${reason}` : ''}.`);
-    return interaction.editReply(`Your LOA has been added from ${from} to ${to}.`);
+    await logToStaff(`LOA pending approval: <@${interaction.user.id}> requested LOA from ${from} to ${to}${reason ? ` reason: ${reason}` : ''}.`);
+    return interaction.editReply(`Your LOA request is pending founder approval from ${from} to ${to}.`);
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'pull_player_modal') {

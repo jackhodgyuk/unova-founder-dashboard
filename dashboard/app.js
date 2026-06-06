@@ -47,6 +47,7 @@ const priorityRulesList = document.getElementById('priorityRulesList');
 const priorityOverridesList = document.getElementById('priorityOverridesList');
 const ticketsNavButton = document.getElementById('ticketsNavButton');
 const ticketsList = document.getElementById('ticketsList');
+const pendingLoaList = document.getElementById('pendingLoaList');
 const loaList = document.getElementById('loaList');
 const displayNameInput = document.getElementById('displayName');
 const announcementForm = document.getElementById('announcementForm');
@@ -215,7 +216,7 @@ function renderStatus(data) {
   renderPlayers();
   renderActions(data.recentActions || []);
   renderTickets(data.openTickets || []);
-  renderLoas(data.loas || []);
+  renderLoas(data.loas || [], data.pendingLoas || []);
 }
 
 function renderPriority(data) {
@@ -351,11 +352,30 @@ function renderTickets(tickets) {
   }
 }
 
-function renderLoas(loas) {
+function renderLoas(loas, pendingLoas = []) {
+  pendingLoaList.innerHTML = '';
   loaList.innerHTML = '';
 
+  if (dashboardUser?.role === 'founder') {
+    if (!pendingLoas.length) {
+      pendingLoaList.innerHTML = '<div class="action-item muted"><span class="badge loa">Pending</span><span>No pending LOA requests.</span><span></span></div>';
+    } else {
+      for (const loa of pendingLoas) {
+        const item = document.createElement('div');
+        item.className = 'action-item';
+        item.innerHTML = [
+          '<span class="badge loa pending">Pending</span>',
+          `<span><b>${escapeHtml(loa.displayName || 'Unova Management')}</b> <small>${escapeHtml(loa.reason || 'No reason provided')}</small></span>`,
+          `<span><button type="button">Approve</button><small>${escapeHtml(loa.from || '')} to ${escapeHtml(loa.to || '')}</small></span>`
+        ].join('');
+        item.querySelector('button').addEventListener('click', () => approveLoa(loa.discordId));
+        pendingLoaList.appendChild(item);
+      }
+    }
+  }
+
   if (!loas.length) {
-    loaList.innerHTML = '<div class="action-item muted"><span></span><span>No active LOAs.</span><span></span></div>';
+    loaList.innerHTML = '<div class="action-item muted"><span class="badge loa">Active</span><span>No approved active LOAs.</span><span></span></div>';
     return;
   }
 
@@ -363,12 +383,21 @@ function renderLoas(loas) {
     const item = document.createElement('div');
     item.className = 'action-item';
     item.innerHTML = [
-      '<span class="badge loa">LOA</span>',
+      '<span class="badge loa">Active</span>',
       `<span><b>${escapeHtml(loa.displayName || 'Unova Management')}</b> <small>${escapeHtml(loa.reason || 'No reason provided')}</small></span>`,
       `<span class="muted">${escapeHtml(loa.from || '')} to ${escapeHtml(loa.to || '')}</span>`
     ].join('');
     loaList.appendChild(item);
   }
+}
+
+async function approveLoa(discordId) {
+  if (dashboardUser?.role !== 'founder') return;
+  const response = await api('/dashboard/loas/approve', {
+    method: 'POST',
+    body: JSON.stringify({ discordId })
+  }).catch(() => null);
+  if (response?.ok) await loadStatus();
 }
 
 async function pollSpectateFrame() {

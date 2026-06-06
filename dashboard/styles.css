@@ -717,6 +717,28 @@ button {
   color: #8ff6ff;
 }
 
+.badge.loa.pending {
+  background: rgba(217, 155, 58, 0.22);
+  color: #ffd58a;
+}
+
+.loa-section {
+  margin-bottom: 14px;
+}
+
+.action-item button {
+  min-height: 34px;
+  padding: 0 12px;
+  background: linear-gradient(135deg, var(--cyan), var(--blue));
+  color: #041018;
+}
+
+.action-item span:last-child small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+}
+
 .priority-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

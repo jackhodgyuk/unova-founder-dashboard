@@ -57,6 +57,7 @@ const stateObjectName = process.env.UNOVA_STATE_OBJECT || 'unova-dashboard-state
 const lockedFounderEmail = String(process.env.LOCKED_FOUNDER_EMAIL || 'jackhodgyuk@gmail.com').trim().toLowerCase();
 const defaultDiscordLogChannelId = '1451550213595467889';
 const defaultAnnouncementChannelId = '1450774864427352175';
+const defaultLoaChannelId = '1512627150623080551';
 const spectateFrameIntervalMs = 100;
 const announcementTagRoleIds = new Set([
   '1450651506930880516',
@@ -1019,6 +1020,72 @@ async function postDashboardAnnouncement(body, user) {
   };
 }
 
+function loaStatusEmbed(pendingLoas, activeLoas) {
+  const pendingText = pendingLoas.length
+    ? pendingLoas.slice(0, 12).map((loa, index) => [
+      `**${index + 1}. ${loa.displayName || 'Unova Management'}**`,
+      `<@${loa.discordId}>`,
+      `${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ].filter(Boolean).join('\n')).join('\n\n') + (pendingLoas.length > 12 ? `\n\n…and ${pendingLoas.length - 12} more pending LOAs on the dashboard.` : '')
+    : 'No pending LOAs.';
+
+  const activeText = activeLoas.length
+    ? activeLoas.slice(0, 12).map((loa, index) => [
+      `**${index + 1}. ${loa.displayName || 'Unova Management'}**`,
+      `<@${loa.discordId}>`,
+      `${loa.from} to ${loa.to}`,
+      loa.reason ? `Reason: ${loa.reason}` : null
+    ].filter(Boolean).join('\n')).join('\n\n') + (activeLoas.length > 12 ? `\n\n…and ${activeLoas.length - 12} more active LOAs on the dashboard.` : '')
+    : 'No approved active LOAs.';
+
+  return {
+    color: 2807784,
+    title: 'LOA Status',
+    description: [
+      '**Pending Founder Approval**',
+      pendingText,
+      '',
+      '**Approved And Active**',
+      activeText
+    ].join('\n'),
+    thumbnail: { url: unovaLogoUrl },
+    footer: { text: 'Unova Management LOA' },
+    timestamp: new Date().toISOString()
+  };
+}
+
+async function updateDiscordLoaStatusMessage() {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  const channelId = cleanId(process.env.DISCORD_LOA_CHANNEL_ID) || defaultLoaChannelId;
+  if (!token || !channelId) return null;
+
+  const [pendingLoas, activeLoas] = await Promise.all([getPendingLoas(), getActiveLoas()]);
+  const embed = loaStatusEmbed(pendingLoas, activeLoas);
+  const messages = await getDiscord(token, `/channels/${channelId}/messages?limit=50`).catch((error) => {
+    console.warn(`[Unova API] LOA status fetch failed: ${error.response?.data?.message || error.message}`);
+    return [];
+  });
+  const existing = Array.isArray(messages)
+    ? messages.find((message) =>
+      message.author?.bot
+      && message.embeds?.some((item) => item.title === 'LOA Status' || item.title === 'Active LOA')
+    )
+    : null;
+
+  if (existing) {
+    return patchDiscord(token, `/channels/${channelId}/messages/${existing.id}`, { embeds: [embed] }).catch((error) => {
+      console.warn(`[Unova API] LOA status edit failed: ${error.response?.data?.message || error.message}`);
+      return null;
+    });
+  }
+
+  return postDiscord(token, `/channels/${channelId}/messages`, { embeds: [embed] }).catch((error) => {
+    console.warn(`[Unova API] LOA status post failed: ${error.response?.data?.message || error.message}`);
+    return null;
+  });
+}
+
 function normalizeOpenTicket(value) {
   if (!value || typeof value !== 'object') return null;
   const id = String(value.id || '').trim();
@@ -1234,7 +1301,8 @@ function normalizeLoa(value) {
   const to = normalizeDateOnly(value.to || value.dateTo);
   if (!discordId || !from || !to || from > to) return null;
 
-  const status = String(value.status || 'active').trim().toLowerCase() === 'cancelled' ? 'cancelled' : 'active';
+  const rawStatus = String(value.status || 'pending').trim().toLowerCase();
+  const status = ['pending', 'active', 'cancelled'].includes(rawStatus) ? rawStatus : 'pending';
   return {
     id: discordId,
     discordId,
@@ -1262,6 +1330,16 @@ function activeLoasFrom(records) {
 
 async function getActiveLoas() {
   return activeLoasFrom(await getLoas());
+}
+
+function pendingLoasFrom(records) {
+  return records
+    .filter((loa) => loa.status === 'pending')
+    .sort((a, b) => a.from.localeCompare(b.from) || a.displayName.localeCompare(b.displayName));
+}
+
+async function getPendingLoas() {
+  return pendingLoasFrom(await getLoas());
 }
 
 function cleanupSpectateSessions() {
@@ -1750,7 +1828,7 @@ async function handleRequest(req, res) {
 
   if (req.method === 'GET' && pathname === '/internal/loas') {
     if (!requireInternal(req, res)) return;
-    sendJson(res, 200, { loas: await getLoas(), activeLoas: await getActiveLoas() });
+    sendJson(res, 200, { loas: await getLoas(), pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 
@@ -1761,10 +1839,12 @@ async function handleRequest(req, res) {
       sendJson(res, 400, { error: 'Valid LOA user, from date, and to date are required.' });
       return;
     }
+    const now = new Date().toISOString();
     state.loas = (await getLoas()).filter((item) => item.discordId !== loa.discordId);
-    state.loas.unshift({ ...loa, status: 'active', updatedAt: new Date().toISOString() });
+    state.loas.unshift({ ...loa, status: 'pending', updatedAt: now });
     await savePersistentState();
-    sendJson(res, 200, { ok: true, loa, activeLoas: await getActiveLoas() });
+    await updateDiscordLoaStatusMessage();
+    sendJson(res, 200, { ok: true, loa: { ...loa, status: 'pending', updatedAt: now }, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 
@@ -1779,7 +1859,8 @@ async function handleRequest(req, res) {
     const now = new Date().toISOString();
     state.loas = (await getLoas()).map((loa) => loa.discordId === discordId ? { ...loa, status: 'cancelled', updatedAt: now } : loa);
     await savePersistentState();
-    sendJson(res, 200, { ok: true, activeLoas: await getActiveLoas() });
+    await updateDiscordLoaStatusMessage();
+    sendJson(res, 200, { ok: true, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 
@@ -1976,8 +2057,45 @@ async function handleRequest(req, res) {
       queueLength: state.moderationQueue.length,
       recentActions: state.recentModerationActions,
       openTickets: hasDashboardRoleAtLeast(user, 'co_owner') ? await activeTickets() : [],
+      pendingLoas: hasDashboardRoleAtLeast(user, 'founder') ? await getPendingLoas() : [],
       loas: await getActiveLoas()
     });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/loas/approve') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId || body.userId);
+    if (!discordId) {
+      sendJson(res, 400, { error: 'Valid Discord user ID is required.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    let approved = null;
+    state.loas = (await getLoas()).map((loa) => {
+      if (loa.discordId !== discordId || loa.status !== 'pending') return loa;
+      approved = { ...loa, status: 'active', approvedBy: user.uid, approvedByName: user.name || 'Founder', approvedAt: now, updatedAt: now };
+      return approved;
+    });
+    if (!approved) {
+      sendJson(res, 404, { error: 'No pending LOA was found for that user.' });
+      return;
+    }
+
+    await savePersistentState();
+    await updateDiscordLoaStatusMessage();
+    await logDiscordAction([
+      '**LOA Approved**',
+      `Founder: ${user.name || user.uid}`,
+      `Member: <@${approved.discordId}>`,
+      `Dates: ${approved.from} to ${approved.to}`,
+      approved.reason ? `Reason: ${approved.reason}` : null
+    ]);
+    sendJson(res, 200, { ok: true, loa: approved, pendingLoas: await getPendingLoas(), activeLoas: await getActiveLoas() });
     return;
   }
 
