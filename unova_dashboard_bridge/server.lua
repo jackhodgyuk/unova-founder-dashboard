@@ -979,22 +979,31 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             CreateThread(function()
                 local maxPlayers = GetConvarInt('sv_maxclients', 64)
                 local startedAt = os.time()
-                local releaseAt = startedAt + 10
 
                 while true do
                     local position = queuePosition(src)
                     local online = #GetPlayers()
                     local waited = os.time() - startedAt
-                    local releaseIn = math.max(0, releaseAt - os.time())
-                    local status = releaseIn > 0
-                        and ('Security sync completing. Minimum city wait: ' .. tostring(releaseIn) .. 's.')
-                        or 'Queue verified. Waiting for your city slot.'
-                    presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, status)
+                    presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue verified. Waiting for your city slot.')
 
-                    if position <= 1 and online < maxPlayers and os.time() >= releaseAt then
+                    if position <= 1 and online < maxPlayers then
                         removeQueueEntry(src)
-                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue cleared. Opening your route into Unova City...')
-                        Wait(750)
+
+                        for secondsLeft = 10, 1, -1 do
+                            presentQueueCard(
+                                deferrals,
+                                entry,
+                                position,
+                                online,
+                                maxPlayers,
+                                os.time() - startedAt,
+                                'Queue cleared. Preparing your route into Unova City in ' .. tostring(secondsLeft) .. 's.'
+                            )
+                            Wait(1000)
+                        end
+
+                        presentQueueCard(deferrals, entry, position, online, maxPlayers, os.time() - startedAt, 'Queue complete. Opening your route into Unova City...')
+                        Wait(500)
                         deferrals.done()
                         return
                     end
