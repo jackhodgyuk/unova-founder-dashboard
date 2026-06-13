@@ -15,9 +15,208 @@ local connectingQueue = {}
 local queueSerial = 0
 local spectateCaptureInFlight = {}
 local SPECTATE_FRAME_INTERVAL_MS = 100
+local UNOVA_LOGO_URL = GetConvar('unova_logo_url', 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG')
+local UNOVA_DISCORD_URL = GetConvar('unova_discord_url', 'https://discord.gg/unova')
+local UNOVA_SUPPORT_URL = GetConvar('unova_support_url', UNOVA_DISCORD_URL)
 
 local function apiUrl(path)
     return DASHBOARD_URL .. path
+end
+
+local function cardText(value)
+    local text = tostring(value or '')
+    text = text:gsub('[\r\n]+', ' ')
+    return text
+end
+
+local function formatWait(seconds)
+    local safeSeconds = math.max(0, tonumber(seconds or 0) or 0)
+    local minutes = math.floor(safeSeconds / 60)
+    local remaining = safeSeconds % 60
+    if minutes > 0 then
+        return string.format('%dm %02ds', minutes, remaining)
+    end
+    return string.format('%ds', remaining)
+end
+
+local function priorityClass(label, points)
+    local cleanLabel = cardText(label or 'Standard Queue')
+    if cleanLabel == '' then cleanLabel = 'Standard Queue' end
+    if tonumber(points or 0) > 0 then
+        return cleanLabel
+    end
+    return 'Standard'
+end
+
+local function unovaQueueCard(entry, position, online, maxPlayers, waitedSeconds, status)
+    local priorityPoints = tonumber(entry and entry.priority or 0) or 0
+    local passenger = cardText(entry and entry.name or 'Player')
+    local queueLabel = priorityClass(entry and entry.label, priorityPoints)
+    local queueStatus = cardText(status or 'City queue active')
+
+    return {
+        type = 'AdaptiveCard',
+        ['@context'] = 'http://schema.org/extensions',
+        ['$schema'] = 'http://adaptivecards.io/schemas/adaptive-card.json',
+        version = '1.3',
+        backgroundImage = {
+            url = UNOVA_LOGO_URL,
+            fillMode = 'RepeatHorizontally',
+            horizontalAlignment = 'Right',
+            verticalAlignment = 'Center'
+        },
+        body = {
+            {
+                type = 'Container',
+                style = 'emphasis',
+                bleed = true,
+                items = {
+                    {
+                        type = 'ColumnSet',
+                        columns = {
+                            {
+                                type = 'Column',
+                                width = 'auto',
+                                items = {
+                                    {
+                                        type = 'Image',
+                                        url = UNOVA_LOGO_URL,
+                                        size = 'Small',
+                                        style = 'Person',
+                                        altText = 'Unova'
+                                    }
+                                }
+                            },
+                            {
+                                type = 'Column',
+                                width = 'stretch',
+                                items = {
+                                    {
+                                        type = 'TextBlock',
+                                        text = 'UNOVA ROLEPLAY',
+                                        weight = 'Bolder',
+                                        color = 'Accent',
+                                        spacing = 'None'
+                                    },
+                                    {
+                                        type = 'TextBlock',
+                                        text = 'City Queue Active',
+                                        size = 'Large',
+                                        weight = 'Bolder',
+                                        wrap = true,
+                                        spacing = 'None'
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        type = 'TextBlock',
+                        text = queueStatus,
+                        wrap = true,
+                        isSubtle = true,
+                        spacing = 'Medium'
+                    }
+                }
+            },
+            {
+                type = 'TextBlock',
+                text = 'CFX QUEUE   ->   UNOVA CITY',
+                horizontalAlignment = 'Center',
+                weight = 'Bolder',
+                size = 'Medium',
+                spacing = 'Medium'
+            },
+            {
+                type = 'ColumnSet',
+                separator = true,
+                columns = {
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'Player', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = passenger, weight = 'Bolder', wrap = true, spacing = 'None' }
+                        }
+                    },
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'Queue Class', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = queueLabel, weight = 'Bolder', wrap = true, spacing = 'None' }
+                        }
+                    },
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'Priority Pts', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = tostring(priorityPoints), weight = 'Bolder', spacing = 'None' }
+                        }
+                    }
+                }
+            },
+            {
+                type = 'ColumnSet',
+                separator = true,
+                columns = {
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'Queue Position', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = tostring(position or 1), weight = 'Bolder', spacing = 'None' }
+                        }
+                    },
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'City Capacity', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = tostring(online or 0) .. ' / ' .. tostring(maxPlayers or 0), weight = 'Bolder', spacing = 'None' }
+                        }
+                    },
+                    {
+                        type = 'Column',
+                        width = 'stretch',
+                        items = {
+                            { type = 'TextBlock', text = 'Waited', isSubtle = true, size = 'Small', spacing = 'None' },
+                            { type = 'TextBlock', text = formatWait(waitedSeconds), weight = 'Bolder', spacing = 'None' }
+                        }
+                    }
+                }
+            },
+            {
+                type = 'TextBlock',
+                text = 'Keep Discord and city life separate. Your queue will clear automatically when the city has space.',
+                wrap = true,
+                isSubtle = true,
+                spacing = 'Medium'
+            }
+        },
+        actions = {
+            { type = 'Action.OpenUrl', title = 'Discord', url = UNOVA_DISCORD_URL },
+            { type = 'Action.OpenUrl', title = 'Support', url = UNOVA_SUPPORT_URL }
+        }
+    }
+end
+
+local function presentQueueCard(deferrals, entry, position, online, maxPlayers, waitedSeconds, status)
+    local card = unovaQueueCard(entry, position, online, maxPlayers, waitedSeconds, status)
+    local ok = pcall(function()
+        deferrals.presentCard(json.encode(card))
+    end)
+
+    if not ok then
+        deferrals.update(('Unova Queue | %s | Position %s | Online %s/%s | Wait %s'):format(
+            priorityClass(entry and entry.label, entry and entry.priority),
+            tostring(position or 1),
+            tostring(online or 0),
+            tostring(maxPlayers or 0),
+            formatWait(waitedSeconds)
+        ))
+    end
 end
 
 local function postSpectateFrame(sessionId, image, errorMessage)
@@ -749,7 +948,7 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
 
     deferrals.defer()
     Wait(0)
-    deferrals.update('Unova Roleplay | Checking account, ban status, and priority...')
+    deferrals.update('Unova Roleplay | Preparing your city queue...')
 
     if not license then
         deferrals.done('Could not read your FiveM license. Please restart FiveM and try again.')
@@ -780,22 +979,21 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             CreateThread(function()
                 local maxPlayers = GetConvarInt('sv_maxclients', 64)
                 local startedAt = os.time()
-                local releaseAt = startedAt + 2
+                local releaseAt = startedAt + 10
 
                 while true do
                     local position = queuePosition(src)
                     local online = #GetPlayers()
-                    deferrals.update(('Unova Priority Queue | %s | Priority %s | Position %s | Online %s/%s'):format(
-                        entry.label,
-                        tostring(entry.priority),
-                        tostring(position),
-                        tostring(online),
-                        tostring(maxPlayers)
-                    ))
+                    local waited = os.time() - startedAt
+                    local releaseIn = math.max(0, releaseAt - os.time())
+                    local status = releaseIn > 0
+                        and ('Security sync completing. Minimum city wait: ' .. tostring(releaseIn) .. 's.')
+                        or 'Queue verified. Waiting for your city slot.'
+                    presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, status)
 
                     if position <= 1 and online < maxPlayers and os.time() >= releaseAt then
                         removeQueueEntry(src)
-                        deferrals.update('Unova Roleplay | Priority accepted. Loading city...')
+                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue cleared. Opening your route into Unova City...')
                         Wait(750)
                         deferrals.done()
                         return
