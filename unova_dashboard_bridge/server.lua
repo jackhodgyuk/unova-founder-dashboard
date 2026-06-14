@@ -15,6 +15,7 @@ local connectingQueue = {}
 local queueSerial = 0
 local spectateCaptureInFlight = {}
 local SPECTATE_FRAME_INTERVAL_MS = 100
+local QUEUE_CARD_HOLD_MS = GetConvarInt('unova_queue_card_hold_ms', 12000)
 local UNOVA_LOGO_URL = GetConvar('unova_logo_url', 'https://r2.fivemanage.com/O8nsC8f5nKWaQAbWhOnvx/IMG_1324.PNG')
 local UNOVA_DISCORD_URL = GetConvar('unova_discord_url', 'https://discord.gg/unova')
 local UNOVA_SUPPORT_URL = GetConvar('unova_support_url', UNOVA_DISCORD_URL)
@@ -299,13 +300,6 @@ local function presentBannedCard(deferrals, ban)
         deferrals.done('You are banned from Unova: ' .. tostring(ban and ban.reason or 'No reason provided'))
         return
     end
-
-    CreateThread(function()
-        Wait(120000)
-        if closed then return end
-        closed = true
-        deferrals.done('You are banned from Unova: ' .. tostring(ban and ban.reason or 'No reason provided'))
-    end)
 end
 
 local function postSpectateFrame(sessionId, image, errorMessage)
@@ -1037,57 +1031,57 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
 
     deferrals.defer()
     Wait(0)
-    deferrals.update('Unova Roleplay | Preparing your city queue...')
 
     if not license then
         deferrals.done('Could not read your FiveM license. Please restart FiveM and try again.')
         return
     end
 
-    PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license) .. '&discordId=' .. urlEncode(discordId or '')), function(status, body)
-        if status == 200 and body then
-            local data = json.decode(body)
-            if data and data.banned then
-                presentBannedCard(deferrals, data.ban or {})
-                return
-            end
-        end
+    fetchPriority(discordId, function(priority)
+        queueSerial = queueSerial + 1
+        local entry = {
+            src = src,
+            name = name,
+            discordId = discordId,
+            priority = priority.points or 0,
+            label = priority.label or 'Standard Queue',
+            joinedAt = queueSerial
+        }
+        table.insert(connectingQueue, entry)
 
-        fetchPriority(discordId, function(priority)
-            queueSerial = queueSerial + 1
-            local entry = {
-                src = src,
-                name = name,
-                discordId = discordId,
-                priority = priority.points or 0,
-                label = priority.label or 'Standard Queue',
-                joinedAt = queueSerial
-            }
-            table.insert(connectingQueue, entry)
+        CreateThread(function()
+            local maxPlayers = GetConvarInt('sv_maxclients', 64)
+            local startedAt = os.time()
+            local position = queuePosition(src)
+            local online = #GetPlayers()
 
-            CreateThread(function()
-                local maxPlayers = GetConvarInt('sv_maxclients', 64)
-                local startedAt = os.time()
-                local queueCardPresented = false
+            presentQueueCard(deferrals, entry, position, online, maxPlayers, 0, 'Queue verified. Preparing your Unova city access.')
+            Wait(math.max(10000, QUEUE_CARD_HOLD_MS))
+
+            PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license) .. '&discordId=' .. urlEncode(discordId or '')), function(status, body)
+                if status == 200 and body then
+                    local data = json.decode(body)
+                    if data and data.banned then
+                        removeQueueEntry(src)
+                        presentBannedCard(deferrals, data.ban or {})
+                        return
+                    end
+                end
 
                 while true do
-                    local position = queuePosition(src)
-                    local online = #GetPlayers()
+                    position = queuePosition(src)
+                    online = #GetPlayers()
                     local waited = os.time() - startedAt
-                    if not queueCardPresented then
-                        queueCardPresented = true
-                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue verified. Waiting for your city slot.')
-                    end
 
                     if position <= 1 and online < maxPlayers then
                         removeQueueEntry(src)
-                        presentQueueCard(deferrals, entry, position, online, maxPlayers, os.time() - startedAt, 'Queue cleared. Preparing your route into Unova City.')
-                        Wait(10000)
+                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue cleared. Preparing your route into Unova City.')
+                        Wait(math.max(10000, QUEUE_CARD_HOLD_MS))
                         deferrals.done()
                         return
                     end
 
-                    if os.time() - startedAt > 180 then
+                    if waited > 180 then
                         removeQueueEntry(src)
                         deferrals.done('Connection queue timed out. Please reconnect to Unova.')
                         return
@@ -1095,9 +1089,9 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
 
                     Wait(2500)
                 end
-            end)
+            end, 'GET', '', { ['x-api-key'] = API_KEY })
         end)
-    end, 'GET', '', { ['x-api-key'] = API_KEY })
+    end)
 end)
 
 AddEventHandler('playerDropped', function()
