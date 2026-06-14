@@ -79,6 +79,7 @@ const state = {
   priorityOverrides: [],
   openTickets: [],
   loas: [],
+  gameBans: [],
   stateLoaded: false,
   stateLoadPromise: null,
   firebaseCerts: null,
@@ -146,6 +147,7 @@ function persistentStatePayload() {
     priorityOverrides: state.priorityOverrides,
     openTickets: state.openTickets,
     loas: state.loas,
+    gameBans: state.gameBans,
     savedAt: new Date().toISOString()
   };
 }
@@ -181,6 +183,7 @@ async function ensureStateLoaded() {
         state.priorityOverrides = Array.isArray(stored.priorityOverrides) ? stored.priorityOverrides.map(normalizePriorityOverride).filter(Boolean) : [];
         state.openTickets = Array.isArray(stored.openTickets) ? stored.openTickets.map(normalizeOpenTicket).filter(Boolean) : [];
         state.loas = Array.isArray(stored.loas) ? stored.loas.map(normalizeLoa).filter(Boolean) : [];
+        state.gameBans = Array.isArray(stored.gameBans) ? stored.gameBans.map(normalizeGameBan).filter(Boolean) : [];
       }
 
       if (!state.priorityRules.length) {
@@ -395,6 +398,7 @@ function publicFirebaseUser(userRecord) {
     uid: userRecord.uid,
     name: fallbackName,
     email: userRecord.email || null,
+    discordId: getClaimDiscordId(claims),
     picture: userRecord.photoURL || null,
     disabled: userRecord.disabled === true,
     roles: roleList,
@@ -1482,6 +1486,56 @@ async function getPendingLoas() {
   return pendingLoasFrom(await getLoas());
 }
 
+function normalizeDateTime(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T23:59:59.000Z` : raw;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normalizeGameBan(value) {
+  const id = String(value.id || Date.now().toString()).trim();
+  const license = String(value.license || '').trim();
+  const discordId = cleanId(value.discordId || value.discord_id);
+  if (!license && !discordId) return null;
+
+  return {
+    id,
+    license,
+    discordId,
+    playerName: String(value.playerName || value.player_name || '').trim().slice(0, 120),
+    reason: String(value.reason || 'Banned from Unova').trim().slice(0, 500),
+    moderatorName: String(value.moderatorName || value.moderator_name || '').trim().slice(0, 120),
+    moderatorDiscordId: cleanId(value.moderatorDiscordId || value.moderator_discord_id),
+    active: value.active !== false && value.active !== 0,
+    expiresAt: normalizeDateTime(value.expiresAt || value.expires_at),
+    createdAt: value.createdAt || value.created_at || new Date().toISOString(),
+    updatedAt: value.updatedAt || value.updated_at || new Date().toISOString()
+  };
+}
+
+async function getGameBans(includeInactive = false) {
+  await ensureStateLoaded();
+  const now = Date.now();
+  return state.gameBans
+    .map(normalizeGameBan)
+    .filter(Boolean)
+    .filter((ban) => includeInactive || (ban.active && (!ban.expiresAt || Date.parse(ban.expiresAt) > now)))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+async function findActiveGameBan({ license, discordId }) {
+  const cleanLicense = String(license || '').trim();
+  const cleanDiscordId = cleanId(discordId);
+  const bans = await getGameBans(false);
+  return bans.find((ban) =>
+    (cleanLicense && ban.license === cleanLicense)
+    || (cleanDiscordId && ban.discordId === cleanDiscordId)
+  ) || null;
+}
+
 function cleanupSpectateSessions() {
   const now = Date.now();
   for (const [sessionId, session] of Object.entries(state.spectateSessions)) {
@@ -2411,6 +2465,113 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/dashboard/bans') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    sendJson(res, 200, { bans: await getGameBans(true) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/bans') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const body = await readBody(req);
+    const ban = normalizeGameBan({
+      id: Date.now().toString(),
+      license: body.license,
+      discordId: body.discordId,
+      playerName: body.playerName,
+      reason: body.reason,
+      expiresAt: body.expiresAt,
+      moderatorName: user.name || user.uid,
+      moderatorDiscordId: user.discordId,
+      active: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    if (!ban) {
+      sendJson(res, 400, { error: 'A FiveM license or Discord ID is required.' });
+      return;
+    }
+
+    state.gameBans = (await getGameBans(true)).filter((item) =>
+      !((ban.license && item.license === ban.license) || (ban.discordId && item.discordId === ban.discordId))
+    );
+    state.gameBans.unshift(ban);
+    await savePersistentState();
+    await logDiscordAction([
+      '**Dashboard Game Ban Added**',
+      `Actor: ${user.name || user.uid} (${user.role})`,
+      ban.playerName ? `Player: ${ban.playerName}` : null,
+      ban.discordId ? `Discord: <@${ban.discordId}> (${ban.discordId})` : null,
+      ban.license ? `License: ${ban.license}` : null,
+      ban.expiresAt ? `Expires: ${ban.expiresAt}` : 'Expires: never',
+      `Reason: ${ban.reason}`
+    ]);
+    sendJson(res, 200, { ok: true, ban, bans: await getGameBans(true) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/bans/remove') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'owner')) return;
+
+    const body = await readBody(req);
+    const id = String(body.id || '').trim();
+    if (!id) {
+      sendJson(res, 400, { error: 'Ban ID is required.' });
+      return;
+    }
+
+    let removed = null;
+    state.gameBans = (await getGameBans(true)).map((ban) => {
+      if (ban.id !== id) return ban;
+      removed = { ...ban, active: false, updatedAt: new Date().toISOString() };
+      return removed;
+    });
+    await savePersistentState();
+    if (removed) {
+      await logDiscordAction([
+        '**Dashboard Game Ban Removed**',
+        `Actor: ${user.name || user.uid} (${user.role})`,
+        removed.playerName ? `Player: ${removed.playerName}` : null,
+        removed.discordId ? `Discord: <@${removed.discordId}> (${removed.discordId})` : null,
+        removed.license ? `License: ${removed.license}` : null
+      ]);
+    }
+    sendJson(res, 200, { ok: true, bans: await getGameBans(true) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/profile/discord') {
+    const user = await requireDashboardUser(req, res);
+    if (!user) return;
+
+    const body = await readBody(req);
+    const discordId = cleanId(body.discordId);
+    if (!discordId) {
+      sendJson(res, 400, { error: 'Valid Discord user ID is required.' });
+      return;
+    }
+
+    try {
+      const auth = getFirebaseAdminAuth();
+      const target = await auth.getUser(user.uid);
+      await auth.setCustomUserClaims(target.uid, {
+        ...extractCustomClaims(target.customClaims || {}),
+        discordId
+      });
+      const updated = await auth.getUser(user.uid);
+      sendJson(res, 200, { ok: true, user: publicFirebaseUser(updated) });
+    } catch (error) {
+      console.warn(`[Unova API] Discord link update failed: ${error.message}`);
+      sendJson(res, 500, { error: 'Could not link Discord ID.' });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && pathname === '/dashboard/priority') {
     const user = await requireDashboardUser(req, res);
     if (!user) return;
@@ -2648,7 +2809,17 @@ async function handleRequest(req, res) {
     if (!requireFiveM(req, res)) return;
 
     const license = requestUrl.searchParams.get('license');
-    const [rows] = await safeQuery('SELECT * FROM fivem_bans WHERE license = ? AND active = 1 LIMIT 1', [license]);
+    const discordId = requestUrl.searchParams.get('discordId');
+    const dashboardBan = await findActiveGameBan({ license, discordId });
+    if (dashboardBan) {
+      sendJson(res, 200, { banned: true, ban: dashboardBan });
+      return;
+    }
+
+    const [rows] = await safeQuery(
+      'SELECT * FROM fivem_bans WHERE license = ? AND active = 1 LIMIT 1',
+      [license]
+    );
     sendJson(res, 200, { banned: rows.length > 0, ban: rows[0] || null });
     return;
   }

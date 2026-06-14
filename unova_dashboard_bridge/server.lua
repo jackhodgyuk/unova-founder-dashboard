@@ -202,6 +202,71 @@ local function unovaQueueCard(entry, position, online, maxPlayers, waitedSeconds
     }
 end
 
+local function unovaBannedCard(ban)
+    local reason = cardText(ban and ban.reason or 'No reason provided')
+    local expiresAt = cardText(ban and (ban.expiresAt or ban.expires_at) or '')
+    local expiryText = expiresAt ~= '' and expiresAt or 'Permanent'
+
+    return {
+        type = 'AdaptiveCard',
+        ['@context'] = 'http://schema.org/extensions',
+        ['$schema'] = 'http://adaptivecards.io/schemas/adaptive-card.json',
+        version = '1.3',
+        body = {
+            {
+                type = 'Container',
+                style = 'attention',
+                bleed = true,
+                items = {
+                    {
+                        type = 'ColumnSet',
+                        columns = {
+                            {
+                                type = 'Column',
+                                width = 'auto',
+                                items = {
+                                    { type = 'Image', url = UNOVA_LOGO_URL, size = 'Small', style = 'Person', altText = 'Unova' }
+                                }
+                            },
+                            {
+                                type = 'Column',
+                                width = 'stretch',
+                                items = {
+                                    { type = 'TextBlock', text = 'UNOVA ROLEPLAY', weight = 'Bolder', color = 'Attention', spacing = 'None' },
+                                    { type = 'TextBlock', text = 'City Access Blocked', size = 'Large', weight = 'Bolder', wrap = true, spacing = 'None' }
+                                }
+                            }
+                        }
+                    },
+                    {
+                        type = 'TextBlock',
+                        text = 'You are currently banned from flying into Unova.',
+                        wrap = true,
+                        spacing = 'Medium'
+                    }
+                }
+            },
+            {
+                type = 'FactSet',
+                facts = {
+                    { title = 'Reason', value = reason },
+                    { title = 'Expires', value = expiryText }
+                }
+            },
+            {
+                type = 'TextBlock',
+                text = 'If you believe this is wrong, open a ticket in Discord.',
+                wrap = true,
+                isSubtle = true
+            }
+        },
+        actions = {
+            { type = 'Action.Submit', title = 'Close', data = { action = 'close_ban_card' } },
+            { type = 'Action.OpenUrl', title = 'Discord', url = UNOVA_DISCORD_URL }
+        }
+    }
+end
+
 local function presentQueueCard(deferrals, entry, position, online, maxPlayers, waitedSeconds, status)
     local card = unovaQueueCard(entry, position, online, maxPlayers, waitedSeconds, status)
     local ok = pcall(function()
@@ -217,6 +282,30 @@ local function presentQueueCard(deferrals, entry, position, online, maxPlayers, 
             formatWait(waitedSeconds)
         ))
     end
+end
+
+local function presentBannedCard(deferrals, ban)
+    local closed = false
+    local card = unovaBannedCard(ban)
+    local ok = pcall(function()
+        deferrals.presentCard(json.encode(card), function()
+            if closed then return end
+            closed = true
+            deferrals.done('You are banned from Unova: ' .. tostring(ban and ban.reason or 'No reason provided'))
+        end)
+    end)
+
+    if not ok then
+        deferrals.done('You are banned from Unova: ' .. tostring(ban and ban.reason or 'No reason provided'))
+        return
+    end
+
+    CreateThread(function()
+        Wait(120000)
+        if closed then return end
+        closed = true
+        deferrals.done('You are banned from Unova: ' .. tostring(ban and ban.reason or 'No reason provided'))
+    end)
 end
 
 local function postSpectateFrame(sessionId, image, errorMessage)
@@ -955,11 +1044,11 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
         return
     end
 
-    PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license)), function(status, body)
+    PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license) .. '&discordId=' .. urlEncode(discordId or '')), function(status, body)
         if status == 200 and body then
             local data = json.decode(body)
             if data and data.banned then
-                deferrals.done('You are banned from Unova: ' .. (data.ban.reason or 'No reason provided'))
+                presentBannedCard(deferrals, data.ban or {})
                 return
             end
         end
@@ -979,31 +1068,21 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             CreateThread(function()
                 local maxPlayers = GetConvarInt('sv_maxclients', 64)
                 local startedAt = os.time()
+                local queueCardPresented = false
 
                 while true do
                     local position = queuePosition(src)
                     local online = #GetPlayers()
                     local waited = os.time() - startedAt
-                    presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue verified. Waiting for your city slot.')
+                    if not queueCardPresented then
+                        queueCardPresented = true
+                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue verified. Waiting for your city slot.')
+                    end
 
                     if position <= 1 and online < maxPlayers then
                         removeQueueEntry(src)
-
-                        for secondsLeft = 10, 1, -1 do
-                            presentQueueCard(
-                                deferrals,
-                                entry,
-                                position,
-                                online,
-                                maxPlayers,
-                                os.time() - startedAt,
-                                'Queue cleared. Preparing your route into Unova City in ' .. tostring(secondsLeft) .. 's.'
-                            )
-                            Wait(1000)
-                        end
-
-                        presentQueueCard(deferrals, entry, position, online, maxPlayers, os.time() - startedAt, 'Queue complete. Opening your route into Unova City...')
-                        Wait(500)
+                        presentQueueCard(deferrals, entry, position, online, maxPlayers, os.time() - startedAt, 'Queue cleared. Preparing your route into Unova City.')
+                        Wait(10000)
                         deferrals.done()
                         return
                     end

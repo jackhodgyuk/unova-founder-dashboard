@@ -44,6 +44,10 @@
             <span class="nav-icon">Q</span>
             <span>Priority</span>
           </button>
+          <button id="bansNavButton" type="button" data-view="bans">
+            <span class="nav-icon">B</span>
+            <span>Ban List</span>
+          </button>
           <button id="settingsNavButton" type="button" data-view="settings">
             <span class="nav-icon">S</span>
             <span>Settings</span>
@@ -299,6 +303,35 @@
             </div>
           </section>
 
+          <section id="bansView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Ban List</h3>
+              <span>Founder and owner access</span>
+            </div>
+            <form id="banForm" class="config-panel ban-panel">
+              <h4>Add Game Ban</h4>
+              <div class="form-grid">
+                <div>
+                  <label for="banPlayerName">Player Name</label>
+                  <input id="banPlayerName" name="playerName" type="text" maxlength="120" placeholder="Optional">
+                </div>
+                <div>
+                  <label for="banDiscordId">Discord ID</label>
+                  <input id="banDiscordId" name="discordId" type="text" inputmode="numeric" placeholder="Optional if license is set">
+                </div>
+              </div>
+              <label for="banLicense">FiveM License</label>
+              <input id="banLicense" name="license" type="text" placeholder="license:xxxxxxxx or stored license value">
+              <label for="banExpiresAt">Temporary Ban Until</label>
+              <input id="banExpiresAt" name="expiresAt" type="datetime-local">
+              <label for="banReason">Reason</label>
+              <textarea id="banReason" name="reason" rows="3" required></textarea>
+              <button id="banSubmitButton" type="submit">Add Ban</button>
+              <p id="banNotice" class="form-notice"></p>
+            </form>
+            <div id="bansList" class="actions-list"></div>
+          </section>
+
           <section id="settingsView" class="actions-view hidden">
             <div class="section-heading">
               <h3>Account Settings</h3>
@@ -314,6 +347,13 @@
               <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" minlength="8" required>
               <button type="submit">Change Password</button>
               <p id="passwordNotice" class="form-notice"></p>
+            </form>
+            <form id="discordLinkForm" class="config-panel">
+              <h4>Discord Link</h4>
+              <label for="discordLinkId">Discord User ID</label>
+              <input id="discordLinkId" name="discordId" type="text" inputmode="numeric" placeholder="Your Discord user ID">
+              <button id="discordLinkSubmitButton" type="submit">Link Discord</button>
+              <p id="discordLinkNotice" class="form-notice"></p>
             </form>
             <div id="founderSettingsPanel" class="config-panel hidden">
               <h4>Firebase User Roles</h4>

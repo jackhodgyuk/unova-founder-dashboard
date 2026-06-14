@@ -34,8 +34,10 @@ const announcementsView = document.getElementById('announcementsView');
 const ticketsView = document.getElementById('ticketsView');
 const loaView = document.getElementById('loaView');
 const priorityView = document.getElementById('priorityView');
+const bansView = document.getElementById('bansView');
 const settingsView = document.getElementById('settingsView');
 const announcementsNavButton = document.getElementById('announcementsNavButton');
+const bansNavButton = document.getElementById('bansNavButton');
 const settingsNavButton = document.getElementById('settingsNavButton');
 const founderSettingsPanel = document.getElementById('founderSettingsPanel');
 const founderCleanupPanel = document.getElementById('founderCleanupPanel');
@@ -57,6 +59,14 @@ const loaRequestSubmitButton = document.getElementById('loaRequestSubmitButton')
 const pendingLoaList = document.getElementById('pendingLoaList');
 const loaList = document.getElementById('loaList');
 const displayNameInput = document.getElementById('displayName');
+const discordLinkForm = document.getElementById('discordLinkForm');
+const discordLinkId = document.getElementById('discordLinkId');
+const discordLinkNotice = document.getElementById('discordLinkNotice');
+const discordLinkSubmitButton = document.getElementById('discordLinkSubmitButton');
+const banForm = document.getElementById('banForm');
+const bansList = document.getElementById('bansList');
+const banNotice = document.getElementById('banNotice');
+const banSubmitButton = document.getElementById('banSubmitButton');
 const announcementForm = document.getElementById('announcementForm');
 const announcementNotice = document.getElementById('announcementNotice');
 const announcementSubmitButton = document.getElementById('announcementSubmitButton');
@@ -118,6 +128,10 @@ function canViewTickets() {
 
 function canPostAnnouncements() {
   return roleRank(dashboardUser?.role) >= roleRank('staff');
+}
+
+function canManageBans() {
+  return roleRank(dashboardUser?.role) >= roleRank('owner');
 }
 
 function describeFirebaseError(error) {
@@ -198,8 +212,10 @@ function renderStatus(data) {
     founderLoaForm?.classList.toggle('hidden', dashboardUser.role !== 'founder');
     loaRequestForm?.classList.toggle('hidden', !dashboardUser.role || dashboardUser.role === 'founder');
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
+    bansNavButton.classList.toggle('hidden', !canManageBans());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
+    if (discordLinkId && !discordLinkId.value) discordLinkId.value = dashboardUser.discordId || '';
     if (dashboardUser.role === 'founder') loadFirebaseUsers();
     if (dashboardUser.role === 'founder') loadLoaManagementMembers();
   }
@@ -433,6 +449,59 @@ function renderLoas(loas, pendingLoas = []) {
     ].join('');
     loaList.appendChild(item);
   }
+}
+
+function formatBanExpiry(value) {
+  if (!value) return 'Permanent';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Permanent';
+  return date.toLocaleString();
+}
+
+function renderBans(bans = []) {
+  bansList.innerHTML = '';
+  if (!canManageBans()) {
+    bansList.innerHTML = '<div class="action-item muted"><span></span><span>Owner or founder access required.</span><span></span></div>';
+    return;
+  }
+
+  if (!bans.length) {
+    bansList.innerHTML = '<div class="action-item muted"><span class="badge ban">Bans</span><span>No bans recorded.</span><span></span></div>';
+    return;
+  }
+
+  for (const ban of bans) {
+    const item = document.createElement('div');
+    item.className = `action-item ${ban.active ? '' : 'muted'}`;
+    item.innerHTML = [
+      `<span class="badge ban">${ban.active ? 'Active' : 'Removed'}</span>`,
+      `<span><b>${escapeHtml(ban.playerName || ban.discordId || ban.license || 'Unknown')}</b><small>${escapeHtml(ban.reason || 'No reason provided')}</small><small>${escapeHtml(ban.discordId || 'No Discord')} / ${escapeHtml(ban.license || 'No license')}</small></span>`,
+      `<span>${escapeHtml(formatBanExpiry(ban.expiresAt))}${ban.active ? '<button type="button">Remove</button>' : ''}</span>`
+    ].join('');
+    const button = item.querySelector('button');
+    if (button) button.addEventListener('click', () => removeBan(ban.id));
+    bansList.appendChild(item);
+  }
+}
+
+async function loadBans() {
+  if (!canManageBans()) return;
+  const response = await api('/dashboard/bans').catch(() => null);
+  if (!response || !response.ok) {
+    bansList.innerHTML = '<div class="action-item muted"><span></span><span>Could not load bans.</span><span></span></div>';
+    return;
+  }
+  const data = await response.json();
+  renderBans(data.bans || []);
+}
+
+async function removeBan(id) {
+  if (!canManageBans()) return;
+  const response = await api('/dashboard/bans/remove', {
+    method: 'POST',
+    body: JSON.stringify({ id })
+  }).catch(() => null);
+  if (response?.ok) await loadBans();
 }
 
 async function decideLoa(discordId, decision) {
@@ -703,10 +772,63 @@ document.querySelectorAll('.nav button').forEach((button) => {
     ticketsView.classList.toggle('hidden', view !== 'tickets');
     loaView.classList.toggle('hidden', view !== 'loa');
     priorityView.classList.toggle('hidden', view !== 'priority');
+    bansView.classList.toggle('hidden', view !== 'bans');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();
+    if (view === 'bans') loadBans();
     if (view === 'loa') loadLoaManagementMembers();
   });
+});
+
+discordLinkForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  discordLinkNotice.textContent = 'Linking Discord...';
+  discordLinkSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(discordLinkForm));
+    const response = await api('/dashboard/profile/discord', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not link Discord.');
+
+    await refreshFirebaseToken(true);
+    dashboardUser = result.user || dashboardUser;
+    discordLinkNotice.textContent = 'Discord linked. LOA requests can now use your Discord account.';
+    await loadStatus();
+  } catch (error) {
+    discordLinkNotice.textContent = error.message || 'Could not link Discord.';
+  } finally {
+    discordLinkSubmitButton.disabled = false;
+  }
+});
+
+banForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageBans()) return;
+
+  banNotice.textContent = 'Adding ban...';
+  banSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(banForm));
+    const response = await api('/dashboard/bans', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not add ban.');
+
+    banForm.reset();
+    banNotice.textContent = 'Ban added. Player will be blocked from flying into Unova.';
+    renderBans(result.bans || []);
+  } catch (error) {
+    banNotice.textContent = error.message || 'Could not add ban.';
+  } finally {
+    banSubmitButton.disabled = false;
+  }
 });
 
 founderLoaForm?.addEventListener('submit', async (event) => {
