@@ -1134,7 +1134,8 @@ function normalizeFeedPost(value) {
     imageWidth: Math.max(1, Math.min(10000, Number(value.imageWidth) || 0)) || null,
     imageHeight: Math.max(1, Math.min(10000, Number(value.imageHeight) || 0)) || null,
     authorName: String(value.authorName || 'UNC Customs').trim().slice(0, 120),
-    createdAt: value.createdAt || new Date().toISOString()
+    createdAt: value.createdAt || new Date().toISOString(),
+    updatedAt: value.updatedAt || null
   };
 }
 
@@ -1209,6 +1210,7 @@ function activityPubOutbox(origin) {
         type: 'Note',
         attributedTo: actorId,
         published: post.createdAt,
+        updated: post.updatedAt || undefined,
         url: `${origin}/feed#${post.id}`,
         to: ['https://www.w3.org/ns/activitystreams#Public'],
         content: `<p><strong>${title}</strong></p><p>${message}</p>`
@@ -1244,6 +1246,7 @@ function activityPubNote(origin, post) {
     type: 'Note',
     attributedTo: actorId,
     published: post.createdAt,
+    updated: post.updatedAt || undefined,
     url: `${origin}/feed#${post.id}`,
     to: ['https://www.w3.org/ns/activitystreams#Public'],
     content: `<p><strong>${escapeActivityHtml(post.title || 'UNC Customs')}</strong></p><p>${escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>')}</p>`
@@ -1305,6 +1308,35 @@ async function createFeedPost(body, user) {
     `Title: ${post.title}`
   ]);
   return { status: 200, payload: { ok: true, post } };
+}
+
+async function editFeedPost(body) {
+  const id = String(body.id || '').trim();
+  const index = state.unovaFeed.findIndex((item) => item.id === id);
+  if (index === -1) return { status: 404, payload: { error: 'Feed post not found.' } };
+
+  const title = String(body.title || '').trim().slice(0, 120) || 'UNC Customs';
+  const message = String(body.message || '').trim().slice(0, 2000);
+  if (!message) return { status: 400, payload: { error: 'Feed message is required.' } };
+
+  const existing = state.unovaFeed[index];
+  let replacementImage = null;
+  if (body.upload) replacementImage = await saveFeedImage(body.upload, crypto.randomUUID());
+
+  const updated = normalizeFeedPost({
+    ...existing,
+    title,
+    message,
+    ...(replacementImage || {}),
+    updatedAt: new Date().toISOString()
+  });
+  state.unovaFeed[index] = updated;
+  await savePersistentState();
+
+  if (replacementImage && existing.imageObject && getStateBucketName()) {
+    await storage.bucket(getStateBucketName()).file(existing.imageObject).delete({ ignoreNotFound: true }).catch(() => null);
+  }
+  return { status: 200, payload: { ok: true, post: updated } };
 }
 
 async function updateFeedProfile(body) {
@@ -2959,6 +2991,18 @@ async function handleRequest(req, res) {
     sendJson(res, result.status, {
       ...result.payload,
       displayName: state.unovaFeedName,
+      posts: publicFeedPosts(publicOrigin)
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/feed/edit') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+    await ensureStateLoaded();
+    const result = await editFeedPost(await readBody(req, 12 * 1024 * 1024));
+    sendJson(res, result.status, {
+      ...result.payload,
       posts: publicFeedPosts(publicOrigin)
     });
     return;

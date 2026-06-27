@@ -869,6 +869,12 @@ button {
   color: var(--text);
 }
 
+.feed-post-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .announcement-panel a {
   color: var(--cyan);
 }
