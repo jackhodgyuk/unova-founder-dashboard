@@ -823,6 +823,15 @@ button {
   gap: 12px;
 }
 
+.feed-avatar-preview {
+  width: 76px;
+  height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  object-fit: cover;
+  background: #090d13;
+}
+
 .feed-post {
   overflow: hidden;
   border: 1px solid var(--line);

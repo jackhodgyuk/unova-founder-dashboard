@@ -218,6 +218,16 @@
               <span>Founder-only city feed</span>
             </div>
             <div class="feed-grid">
+              <form id="feedProfileForm" class="config-panel feed-panel">
+                <h4>Feed Profile</h4>
+                <img id="feedAvatarPreview" class="feed-avatar-preview" alt="Feed profile">
+                <label for="feedDisplayName">Display Name</label>
+                <input id="feedDisplayName" name="displayName" type="text" maxlength="80" value="UNC Customs" required>
+                <label for="feedAvatarFile">Profile Picture</label>
+                <input id="feedAvatarFile" name="avatarFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+                <button id="feedProfileSubmitButton" type="submit">Save Feed Profile</button>
+                <p id="feedProfileNotice" class="form-notice"></p>
+              </form>
               <form id="feedForm" class="config-panel feed-panel">
                 <h4>Publish Feed Post</h4>
                 <label for="feedTitle">Title</label>
