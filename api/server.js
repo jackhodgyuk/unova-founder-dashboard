@@ -1124,7 +1124,7 @@ function normalizeFeedPost(value) {
   if (!value || typeof value !== 'object') return null;
   const id = String(value.id || '').trim();
   const message = String(value.message || '').trim().slice(0, 2000);
-  if (!id || !message) return null;
+  if (!id) return null;
   return {
     id,
     title: String(value.title || 'UNC Customs').trim().slice(0, 120) || 'UNC Customs',
@@ -1287,7 +1287,6 @@ async function saveFeedImage(upload, postId) {
 
 async function createFeedPost(body, user) {
   const message = String(body.message || '').trim().slice(0, 2000);
-  if (!message) return { status: 400, payload: { error: 'Feed message is required.' } };
 
   const id = crypto.randomUUID();
   const image = body.upload ? await saveFeedImage(body.upload, id) : null;
@@ -1317,7 +1316,6 @@ async function editFeedPost(body) {
 
   const title = String(body.title || '').trim().slice(0, 120) || 'UNC Customs';
   const message = String(body.message || '').trim().slice(0, 2000);
-  if (!message) return { status: 400, payload: { error: 'Feed message is required.' } };
 
   const existing = state.unovaFeed[index];
   let replacementImage = null;
