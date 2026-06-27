@@ -218,29 +218,35 @@
               <span>Founder-only city feed</span>
             </div>
             <div class="feed-grid">
-              <form id="feedProfileForm" class="config-panel feed-panel">
-                <h4>Feed Profile</h4>
-                <img id="feedAvatarPreview" class="feed-avatar-preview" alt="Feed profile">
-                <label for="feedDisplayName">Display Name</label>
-                <input id="feedDisplayName" name="displayName" type="text" maxlength="80" value="UNC Customs" required>
-                <label for="feedAvatarFile">Profile Picture</label>
-                <input id="feedAvatarFile" name="avatarFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-                <button id="feedProfileSubmitButton" type="submit">Save Feed Profile</button>
-                <p id="feedProfileNotice" class="form-notice"></p>
-              </form>
-              <form id="feedForm" class="config-panel feed-panel">
-                <h4>Publish Feed Post</h4>
-                <label for="feedTitle">Title</label>
-                <input id="feedTitle" name="title" type="text" maxlength="120" value="UNC Customs">
-                <label for="feedMessage">Message</label>
-                <textarea id="feedMessage" name="message" rows="7" maxlength="2000" placeholder="Write the update shown in FiveM..." required></textarea>
-                <label for="feedImageFile">Upload Image</label>
-                <input id="feedImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
-                <button id="feedSubmitButton" type="submit">Publish to UNC Customs</button>
-                <button id="feedCancelEditButton" class="hidden" type="button">Cancel Edit</button>
-                <p id="feedNotice" class="form-notice"></p>
-              </form>
-              <section>
+              <div class="feed-controls">
+                <form id="feedProfileForm" class="config-panel feed-panel">
+                  <h4>Feed Profile</h4>
+                  <div class="feed-profile-row">
+                    <img id="feedAvatarPreview" class="feed-avatar-preview" alt="Feed profile">
+                    <div>
+                      <label for="feedDisplayName">Display Name</label>
+                      <input id="feedDisplayName" name="displayName" type="text" maxlength="80" value="UNC Customs" required>
+                    </div>
+                  </div>
+                  <label for="feedAvatarFile">Profile Picture</label>
+                  <input id="feedAvatarFile" name="avatarFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+                  <button id="feedProfileSubmitButton" type="submit">Save Feed Profile</button>
+                  <p id="feedProfileNotice" class="form-notice"></p>
+                </form>
+                <form id="feedForm" class="config-panel feed-panel">
+                  <h4>Publish Feed Post</h4>
+                  <label for="feedTitle">Title</label>
+                  <input id="feedTitle" name="title" type="text" maxlength="120" value="UNC Customs">
+                  <label for="feedMessage">Message</label>
+                  <textarea id="feedMessage" name="message" rows="5" maxlength="2000" placeholder="Write the update shown in FiveM..." required></textarea>
+                  <label for="feedImageFile">Upload Image</label>
+                  <input id="feedImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+                  <button id="feedSubmitButton" type="submit">Publish to UNC Customs</button>
+                  <button id="feedCancelEditButton" class="hidden" type="button">Cancel Edit</button>
+                  <p id="feedNotice" class="form-notice"></p>
+                </form>
+              </div>
+              <section class="feed-published">
                 <h4>Published Posts</h4>
                 <div id="feedPostsList" class="feed-posts"></div>
               </section>
