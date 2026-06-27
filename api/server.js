@@ -1158,10 +1158,13 @@ function activityPubActor(origin) {
       'https://w3id.org/security/v1'
     ],
     id: actorId,
-    type: 'Service',
+    type: 'Person',
     preferredUsername: 'unc-customs',
     name: 'UNC Customs',
     summary: 'Official UNC Customs feed for Unova Roleplay.',
+    discoverable: true,
+    indexable: true,
+    manuallyApprovesFollowers: false,
     url: `${origin}/feed`,
     icon: {
       type: 'Image',
