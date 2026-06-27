@@ -906,6 +906,54 @@ button {
   gap: 8px;
 }
 
+.feed-edit-overlay {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(3, 7, 12, 0.82);
+  backdrop-filter: blur(8px);
+}
+
+.feed-edit-overlay.hidden {
+  display: none;
+}
+
+.feed-edit-panel {
+  width: min(620px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  border-color: rgba(40, 215, 232, 0.45);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+
+.feed-edit-heading,
+.feed-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.feed-edit-heading button {
+  min-width: 40px;
+  padding: 0;
+  background: #202b38;
+  color: var(--text);
+  font-size: 22px;
+}
+
+.feed-edit-actions button {
+  flex: 1;
+}
+
+.feed-edit-actions button:last-child {
+  background: #202b38;
+  color: var(--text);
+}
+
 .announcement-panel a {
   color: var(--cyan);
 }

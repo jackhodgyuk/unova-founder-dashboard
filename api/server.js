@@ -1127,7 +1127,7 @@ function normalizeFeedPost(value) {
   if (!id) return null;
   return {
     id,
-    title: String(value.title || 'UNC Customs').trim().slice(0, 120) || 'UNC Customs',
+    title: String(value.title || '').trim().slice(0, 120),
     message,
     imageObject: String(value.imageObject || '').trim().slice(0, 500) || null,
     imageContentType: String(value.imageContentType || '').trim().slice(0, 100) || null,
@@ -1163,6 +1163,13 @@ function escapeActivityHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function activityPostContent(post) {
+  const parts = [];
+  if (post.title) parts.push(`<p><strong>${escapeActivityHtml(post.title)}</strong></p>`);
+  if (post.message) parts.push(`<p>${escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>')}</p>`);
+  return parts.join('') || '<p></p>';
 }
 
 function activityPubActor(origin) {
@@ -1203,8 +1210,6 @@ function activityPubOutbox(origin) {
     totalItems: posts.length,
     orderedItems: posts.map((post) => {
       const noteId = `${actorId}/posts/${post.id}`;
-      const title = escapeActivityHtml(post.title || 'UNC Customs');
-      const message = escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>');
       const note = {
         id: noteId,
         type: 'Note',
@@ -1213,7 +1218,7 @@ function activityPubOutbox(origin) {
         updated: post.updatedAt || undefined,
         url: `${origin}/feed#${post.id}`,
         to: ['https://www.w3.org/ns/activitystreams#Public'],
-        content: `<p><strong>${title}</strong></p><p>${message}</p>`
+        content: activityPostContent(post)
       };
       if (post.imageUrl) {
         note.attachment = [{
@@ -1249,7 +1254,7 @@ function activityPubNote(origin, post) {
     updated: post.updatedAt || undefined,
     url: `${origin}/feed#${post.id}`,
     to: ['https://www.w3.org/ns/activitystreams#Public'],
-    content: `<p><strong>${escapeActivityHtml(post.title || 'UNC Customs')}</strong></p><p>${escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>')}</p>`
+    content: activityPostContent(post)
   };
   if (post.imageUrl) {
     note.attachment = [{
@@ -1314,7 +1319,7 @@ async function editFeedPost(body) {
   const index = state.unovaFeed.findIndex((item) => item.id === id);
   if (index === -1) return { status: 404, payload: { error: 'Feed post not found.' } };
 
-  const title = String(body.title || '').trim().slice(0, 120) || 'UNC Customs';
+  const title = String(body.title || '').trim().slice(0, 120);
   const message = String(body.message || '').trim().slice(0, 2000);
 
   const existing = state.unovaFeed[index];
