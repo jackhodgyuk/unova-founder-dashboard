@@ -31,12 +31,14 @@ const actionsList = document.getElementById('actionsList');
 const playersView = document.getElementById('playersView');
 const actionsView = document.getElementById('actionsView');
 const announcementsView = document.getElementById('announcementsView');
+const feedView = document.getElementById('feedView');
 const ticketsView = document.getElementById('ticketsView');
 const loaView = document.getElementById('loaView');
 const priorityView = document.getElementById('priorityView');
 const bansView = document.getElementById('bansView');
 const settingsView = document.getElementById('settingsView');
 const announcementsNavButton = document.getElementById('announcementsNavButton');
+const feedNavButton = document.getElementById('feedNavButton');
 const bansNavButton = document.getElementById('bansNavButton');
 const settingsNavButton = document.getElementById('settingsNavButton');
 const founderSettingsPanel = document.getElementById('founderSettingsPanel');
@@ -71,6 +73,11 @@ const announcementForm = document.getElementById('announcementForm');
 const announcementNotice = document.getElementById('announcementNotice');
 const announcementSubmitButton = document.getElementById('announcementSubmitButton');
 const announcementImageFile = document.getElementById('announcementImageFile');
+const feedForm = document.getElementById('feedForm');
+const feedImageFile = document.getElementById('feedImageFile');
+const feedSubmitButton = document.getElementById('feedSubmitButton');
+const feedNotice = document.getElementById('feedNotice');
+const feedPostsList = document.getElementById('feedPostsList');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -128,6 +135,10 @@ function canViewTickets() {
 
 function canPostAnnouncements() {
   return roleRank(dashboardUser?.role) >= roleRank('staff');
+}
+
+function canManageFeed() {
+  return dashboardUser?.role === 'founder';
 }
 
 function canManageBans() {
@@ -214,6 +225,7 @@ function renderStatus(data) {
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
     bansNavButton.classList.toggle('hidden', !canManageBans());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
+    feedNavButton.classList.toggle('hidden', !canManageFeed());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
     if (discordLinkId && !discordLinkId.value) discordLinkId.value = dashboardUser.discordId || '';
     if (dashboardUser.role === 'founder') loadFirebaseUsers();
@@ -482,6 +494,49 @@ function renderBans(bans = []) {
     if (button) button.addEventListener('click', () => removeBan(ban.id));
     bansList.appendChild(item);
   }
+}
+
+function renderFeedPosts(posts = []) {
+  feedPostsList.innerHTML = '';
+  if (!posts.length) {
+    feedPostsList.innerHTML = '<div class="feed-post"><div class="feed-post-body"><p>No UNC Customs posts yet.</p></div></div>';
+    return;
+  }
+
+  for (const post of posts) {
+    const article = document.createElement('article');
+    article.className = 'feed-post';
+    article.innerHTML = [
+      post.imageUrl ? `<img src="${escapeHtml(post.imageUrl)}" alt="">` : '',
+      '<div class="feed-post-body">',
+      `<h4>${escapeHtml(post.title || 'UNC Customs')}</h4>`,
+      `<p>${escapeHtml(post.message || '')}</p>`,
+      `<small>${escapeHtml(post.authorName || 'UNC Customs')} · ${new Date(post.createdAt).toLocaleString()}</small>`,
+      '<button type="button">Delete</button>',
+      '</div>'
+    ].join('');
+    article.querySelector('button').addEventListener('click', () => deleteFeedPost(post.id));
+    feedPostsList.appendChild(article);
+  }
+}
+
+async function loadFeed() {
+  if (!canManageFeed()) return;
+  const response = await api('/dashboard/feed').catch(() => null);
+  if (!response?.ok) {
+    feedPostsList.innerHTML = '<div class="feed-post"><div class="feed-post-body"><p>Could not load the UNC Customs feed.</p></div></div>';
+    return;
+  }
+  renderFeedPosts((await response.json()).posts || []);
+}
+
+async function deleteFeedPost(id) {
+  if (!canManageFeed()) return;
+  const response = await api('/dashboard/feed/delete', {
+    method: 'POST',
+    body: JSON.stringify({ id })
+  }).catch(() => null);
+  if (response?.ok) renderFeedPosts((await response.json()).posts || []);
 }
 
 async function loadBans() {
@@ -769,12 +824,14 @@ document.querySelectorAll('.nav button').forEach((button) => {
     playersView.classList.toggle('hidden', view !== 'players');
     actionsView.classList.toggle('hidden', view !== 'actions');
     announcementsView.classList.toggle('hidden', view !== 'announcements');
+    feedView.classList.toggle('hidden', view !== 'feed');
     ticketsView.classList.toggle('hidden', view !== 'tickets');
     loaView.classList.toggle('hidden', view !== 'loa');
     priorityView.classList.toggle('hidden', view !== 'priority');
     bansView.classList.toggle('hidden', view !== 'bans');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();
+    if (view === 'feed') loadFeed();
     if (view === 'bans') loadBans();
     if (view === 'loa') loadLoaManagementMembers();
   });
@@ -922,6 +979,37 @@ announcementForm.addEventListener('submit', async (event) => {
     announcementNotice.textContent = error.message || 'Announcement failed.';
   } finally {
     announcementSubmitButton.disabled = false;
+  }
+});
+
+feedForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageFeed()) return;
+
+  feedNotice.textContent = 'Publishing to UNC Customs...';
+  feedSubmitButton.disabled = true;
+  try {
+    const data = Object.fromEntries(new FormData(feedForm));
+    const upload = await readImageFile(feedImageFile.files?.[0]);
+    const response = await api('/dashboard/feed', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: data.title,
+        message: data.message,
+        upload
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not publish the feed post.');
+
+    feedForm.reset();
+    document.getElementById('feedTitle').value = 'UNC Customs';
+    feedNotice.textContent = 'Published to UNC Customs and ready for FiveM.';
+    renderFeedPosts(result.posts || []);
+  } catch (error) {
+    feedNotice.textContent = error.message || 'Could not publish the feed post.';
+  } finally {
+    feedSubmitButton.disabled = false;
   }
 });
 

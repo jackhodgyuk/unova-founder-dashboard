@@ -80,6 +80,7 @@ const state = {
   openTickets: [],
   loas: [],
   gameBans: [],
+  unovaFeed: [],
   stateLoaded: false,
   stateLoadPromise: null,
   firebaseCerts: null,
@@ -148,6 +149,7 @@ function persistentStatePayload() {
     openTickets: state.openTickets,
     loas: state.loas,
     gameBans: state.gameBans,
+    unovaFeed: state.unovaFeed,
     savedAt: new Date().toISOString()
   };
 }
@@ -184,6 +186,7 @@ async function ensureStateLoaded() {
         state.openTickets = Array.isArray(stored.openTickets) ? stored.openTickets.map(normalizeOpenTicket).filter(Boolean) : [];
         state.loas = Array.isArray(stored.loas) ? stored.loas.map(normalizeLoa).filter(Boolean) : [];
         state.gameBans = Array.isArray(stored.gameBans) ? stored.gameBans.map(normalizeGameBan).filter(Boolean) : [];
+        state.unovaFeed = Array.isArray(stored.unovaFeed) ? stored.unovaFeed.map(normalizeFeedPost).filter(Boolean) : [];
       }
 
       if (!state.priorityRules.length) {
@@ -1095,6 +1098,74 @@ function normalizeAnnouncementAttachment(upload) {
   };
 }
 
+function normalizeFeedPost(value) {
+  if (!value || typeof value !== 'object') return null;
+  const id = String(value.id || '').trim();
+  const message = String(value.message || '').trim().slice(0, 2000);
+  if (!id || !message) return null;
+  return {
+    id,
+    title: String(value.title || 'UNC Customs').trim().slice(0, 120) || 'UNC Customs',
+    message,
+    imageObject: String(value.imageObject || '').trim().slice(0, 500) || null,
+    imageContentType: String(value.imageContentType || '').trim().slice(0, 100) || null,
+    authorName: String(value.authorName || 'UNC Customs').trim().slice(0, 120),
+    createdAt: value.createdAt || new Date().toISOString()
+  };
+}
+
+function publicFeedPosts(origin) {
+  return state.unovaFeed.map((post) => ({
+    ...post,
+    imageUrl: post.imageObject
+      ? `${origin}/feed/images/${encodeURIComponent(post.imageObject.split('/').pop())}`
+      : null,
+    imageObject: undefined,
+    imageContentType: undefined
+  }));
+}
+
+async function saveFeedImage(upload, postId) {
+  const attachment = normalizeAnnouncementAttachment(upload);
+  if (!attachment) return null;
+  const bucketName = getStateBucketName();
+  if (!bucketName) throw new Error('UNOVA_STATE_BUCKET is required for feed image uploads.');
+
+  const extension = attachment.filename.split('.').pop();
+  const imageObject = `feed-images/${postId}.${extension}`;
+  await storage.bucket(bucketName).file(imageObject).save(attachment.buffer, {
+    contentType: attachment.contentType,
+    resumable: false,
+    metadata: { cacheControl: 'public, max-age=31536000, immutable' }
+  });
+  return { imageObject, imageContentType: attachment.contentType };
+}
+
+async function createFeedPost(body, user) {
+  const message = String(body.message || '').trim().slice(0, 2000);
+  if (!message) return { status: 400, payload: { error: 'Feed message is required.' } };
+
+  const id = crypto.randomUUID();
+  const image = body.upload ? await saveFeedImage(body.upload, id) : null;
+  const post = normalizeFeedPost({
+    id,
+    title: body.title,
+    message,
+    authorName: user.name || 'UNC Customs',
+    createdAt: new Date().toISOString(),
+    ...(image || {})
+  });
+  state.unovaFeed.unshift(post);
+  state.unovaFeed = state.unovaFeed.slice(0, 100);
+  await savePersistentState();
+  await logDiscordAction([
+    '**Unova Feed Post Published**',
+    `Actor: ${user.name || user.uid} (${user.role})`,
+    `Title: ${post.title}`
+  ]);
+  return { status: 200, payload: { ok: true, post } };
+}
+
 async function postDashboardAnnouncement(body, user) {
   const token = process.env.DISCORD_BOT_TOKEN;
   const channelId = cleanId(process.env.DISCORD_ANNOUNCEMENTS_CHANNEL_ID) || defaultAnnouncementChannelId;
@@ -1919,6 +1990,8 @@ async function getPersistedStatus() {
 async function handleRequest(req, res) {
   const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = requestUrl.pathname;
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const publicOrigin = `${forwardedProto || requestUrl.protocol.replace(':', '')}://${req.headers.host || 'localhost'}`;
 
   if (req.method === 'GET' && (pathname === '/health' || pathname === '/healthz')) {
     sendJson(res, 200, { ok: true });
@@ -1927,6 +2000,47 @@ async function handleRequest(req, res) {
 
   if (req.method === 'GET' && pathname === '/') {
     redirect(res, '/dashboard/');
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/feed') {
+    await ensureStateLoaded();
+    sendJson(res, 200, { posts: publicFeedPosts(publicOrigin), updatedAt: new Date().toISOString() });
+    return;
+  }
+
+  const feedImageMatch = pathname.match(/^\/feed\/images\/([^/]+)$/);
+  if (req.method === 'GET' && feedImageMatch) {
+    await ensureStateLoaded();
+    const filename = decodeURIComponent(feedImageMatch[1]);
+    if (!/^[a-f0-9-]+\.(?:png|jpe?g|gif|webp)$/i.test(filename)) {
+      sendJson(res, 404, { error: 'Image not found.' });
+      return;
+    }
+    const bucketName = getStateBucketName();
+    if (!bucketName) {
+      sendJson(res, 404, { error: 'Image storage is not configured.' });
+      return;
+    }
+    try {
+      const [metadata] = await storage.bucket(bucketName).file(`feed-images/${filename}`).getMetadata();
+      res.writeHead(200, {
+        'Content-Type': metadata.contentType || 'application/octet-stream',
+        'Cache-Control': 'public, max-age=31536000, immutable'
+      });
+      storage.bucket(bucketName).file(`feed-images/${filename}`).createReadStream()
+        .on('error', () => res.destroy())
+        .pipe(res);
+    } catch {
+      sendJson(res, 404, { error: 'Image not found.' });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/fivem/feed') {
+    if (!requireFiveM(req, res)) return;
+    await ensureStateLoaded();
+    sendJson(res, 200, { posts: publicFeedPosts(publicOrigin) });
     return;
   }
 
@@ -2589,6 +2703,46 @@ async function handleRequest(req, res) {
 
     const result = await postDashboardAnnouncement(await readBody(req, 12 * 1024 * 1024), user);
     sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/feed') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+    await ensureStateLoaded();
+    sendJson(res, 200, { posts: publicFeedPosts(publicOrigin) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/feed') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+    await ensureStateLoaded();
+    const result = await createFeedPost(await readBody(req, 12 * 1024 * 1024), user);
+    sendJson(res, result.status, {
+      ...result.payload,
+      posts: publicFeedPosts(publicOrigin)
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/feed/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+    await ensureStateLoaded();
+    const body = await readBody(req);
+    const id = String(body.id || '').trim();
+    const post = state.unovaFeed.find((item) => item.id === id);
+    if (!post) {
+      sendJson(res, 404, { error: 'Feed post not found.' });
+      return;
+    }
+    state.unovaFeed = state.unovaFeed.filter((item) => item.id !== id);
+    await savePersistentState();
+    if (post.imageObject && getStateBucketName()) {
+      await storage.bucket(getStateBucketName()).file(post.imageObject).delete({ ignoreNotFound: true }).catch(() => null);
+    }
+    sendJson(res, 200, { ok: true, posts: publicFeedPosts(publicOrigin) });
     return;
   }
 

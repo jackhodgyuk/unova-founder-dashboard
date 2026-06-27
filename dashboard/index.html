@@ -32,6 +32,10 @@
             <span class="nav-icon">N</span>
             <span>Announcements</span>
           </button>
+          <button id="feedNavButton" class="hidden" type="button" data-view="feed">
+            <span class="nav-icon">C</span>
+            <span>UNC Customs</span>
+          </button>
           <button id="ticketsNavButton" type="button" data-view="tickets">
             <span class="nav-icon">T</span>
             <span>Tickets</span>
@@ -206,6 +210,30 @@
               <button id="announcementSubmitButton" type="submit">Post Announcement</button>
               <p id="announcementNotice" class="form-notice"></p>
             </form>
+          </section>
+
+          <section id="feedView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>UNC Customs</h3>
+              <span>Founder-only city feed</span>
+            </div>
+            <div class="feed-grid">
+              <form id="feedForm" class="config-panel feed-panel">
+                <h4>Publish Feed Post</h4>
+                <label for="feedTitle">Title</label>
+                <input id="feedTitle" name="title" type="text" maxlength="120" value="UNC Customs">
+                <label for="feedMessage">Message</label>
+                <textarea id="feedMessage" name="message" rows="7" maxlength="2000" placeholder="Write the update shown in FiveM..." required></textarea>
+                <label for="feedImageFile">Upload Image</label>
+                <input id="feedImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+                <button id="feedSubmitButton" type="submit">Publish to UNC Customs</button>
+                <p id="feedNotice" class="form-notice"></p>
+              </form>
+              <section>
+                <h4>Published Posts</h4>
+                <div id="feedPostsList" class="feed-posts"></div>
+              </section>
+            </div>
           </section>
 
           <section id="ticketsView" class="actions-view hidden">

@@ -812,6 +812,54 @@ button {
   max-width: 860px;
 }
 
+.feed-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+  gap: 14px;
+}
+
+.feed-posts {
+  display: grid;
+  gap: 12px;
+}
+
+.feed-post {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(18, 24, 33, 0.76);
+}
+
+.feed-post img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+}
+
+.feed-post-body {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+}
+
+.feed-post-body h4,
+.feed-post-body p {
+  margin: 0;
+}
+
+.feed-post-body small {
+  color: var(--muted);
+}
+
+.feed-post-body button {
+  justify-self: end;
+  min-height: 34px;
+  padding: 0 12px;
+  background: #202b38;
+  color: var(--text);
+}
+
 .announcement-panel a {
   color: var(--cyan);
 }
@@ -924,6 +972,7 @@ button {
   .player-row,
   .action-item,
   .priority-grid,
+  .feed-grid,
   .form-grid,
   .config-list > div {
     grid-template-columns: 1fr;
