@@ -1127,7 +1127,6 @@ function normalizeFeedPost(value) {
   if (!id) return null;
   return {
     id,
-    title: String(value.title || '').trim().slice(0, 120),
     message,
     imageObject: String(value.imageObject || '').trim().slice(0, 500) || null,
     imageContentType: String(value.imageContentType || '').trim().slice(0, 100) || null,
@@ -1167,7 +1166,6 @@ function escapeActivityHtml(value) {
 
 function activityPostContent(post) {
   const parts = [];
-  if (post.title) parts.push(`<p><strong>${escapeActivityHtml(post.title)}</strong></p>`);
   if (post.message) parts.push(`<p>${escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>')}</p>`);
   return parts.join('') || '<p></p>';
 }
@@ -1225,7 +1223,7 @@ function activityPubOutbox(origin) {
           type: 'Image',
           mediaType: 'image/*',
           url: post.imageUrl,
-          name: post.title || 'UNC Customs image',
+          name: `${state.unovaFeedName || 'Unova Roleplay'} image`,
           width: post.imageWidth || 1200,
           height: post.imageHeight || 675
         }];
@@ -1261,7 +1259,7 @@ function activityPubNote(origin, post) {
       type: 'Image',
       mediaType: 'image/*',
       url: post.imageUrl,
-      name: post.title || 'UNC Customs image',
+      name: `${state.unovaFeedName || 'Unova Roleplay'} image`,
       width: post.imageWidth || 1200,
       height: post.imageHeight || 675
     }];
@@ -1297,7 +1295,6 @@ async function createFeedPost(body, user) {
   const image = body.upload ? await saveFeedImage(body.upload, id) : null;
   const post = normalizeFeedPost({
     id,
-    title: body.title,
     message,
     authorName: state.unovaFeedName,
     createdAt: new Date().toISOString(),
@@ -1308,8 +1305,7 @@ async function createFeedPost(body, user) {
   await savePersistentState();
   await logDiscordAction([
     '**Unova Feed Post Published**',
-    `Actor: ${user.name || user.uid} (${user.role})`,
-    `Title: ${post.title}`
+    `Actor: ${user.name || user.uid} (${user.role})`
   ]);
   return { status: 200, payload: { ok: true, post } };
 }
@@ -1319,7 +1315,6 @@ async function editFeedPost(body) {
   const index = state.unovaFeed.findIndex((item) => item.id === id);
   if (index === -1) return { status: 404, payload: { error: 'Feed post not found.' } };
 
-  const title = String(body.title || '').trim().slice(0, 120);
   const message = String(body.message || '').trim().slice(0, 2000);
 
   const existing = state.unovaFeed[index];
@@ -1328,7 +1323,6 @@ async function editFeedPost(body) {
 
   const updated = normalizeFeedPost({
     ...existing,
-    title,
     message,
     ...(replacementImage || {}),
     updatedAt: new Date().toISOString()

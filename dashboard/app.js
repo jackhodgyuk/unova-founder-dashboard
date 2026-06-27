@@ -86,7 +86,6 @@ const feedProfileSubmitButton = document.getElementById('feedProfileSubmitButton
 const feedProfileNotice = document.getElementById('feedProfileNotice');
 const feedEditView = document.getElementById('feedEditView');
 const feedEditForm = document.getElementById('feedEditForm');
-const feedEditTitle = document.getElementById('feedEditTitle');
 const feedEditMessage = document.getElementById('feedEditMessage');
 const feedEditImageFile = document.getElementById('feedEditImageFile');
 const feedEditSaveButton = document.getElementById('feedEditSaveButton');
@@ -525,7 +524,6 @@ function renderFeedPosts(posts = []) {
     article.innerHTML = [
       post.imageUrl ? `<img src="${escapeHtml(post.imageUrl)}" alt="">` : '',
       '<div class="feed-post-body">',
-      post.title ? `<h4>${escapeHtml(post.title)}</h4>` : '',
       `<p>${escapeHtml(post.message || '')}</p>`,
       `<small>${escapeHtml(post.authorName || 'UNC Customs')} · ${new Date(post.createdAt).toLocaleString()}</small>`,
       '<div class="feed-post-actions"><button data-feed-edit type="button">Edit</button><button data-feed-delete type="button">Delete</button></div>',
@@ -539,12 +537,11 @@ function renderFeedPosts(posts = []) {
 
 function startFeedPostEdit(post) {
   editingFeedPostId = post.id;
-  feedEditTitle.value = post.title || '';
   feedEditMessage.value = post.message || '';
   feedEditImageFile.value = '';
   feedEditNotice.textContent = 'Choose a new image only if you want to replace the current one.';
   feedEditView.classList.remove('hidden');
-  feedEditTitle.focus();
+  feedEditMessage.focus();
 }
 
 function cancelFeedPostEdit() {
@@ -1039,7 +1036,6 @@ feedForm?.addEventListener('submit', async (event) => {
     const response = await api('/dashboard/feed', {
       method: 'POST',
       body: JSON.stringify({
-        title: data.title,
         message: data.message,
         upload
       })
@@ -1069,7 +1065,6 @@ feedEditForm?.addEventListener('submit', async (event) => {
       method: 'POST',
       body: JSON.stringify({
         id: editingFeedPostId,
-        title: feedEditTitle.value,
         message: feedEditMessage.value,
         upload
       })
