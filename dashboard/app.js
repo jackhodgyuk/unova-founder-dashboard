@@ -84,7 +84,15 @@ const feedAvatarFile = document.getElementById('feedAvatarFile');
 const feedAvatarPreview = document.getElementById('feedAvatarPreview');
 const feedProfileSubmitButton = document.getElementById('feedProfileSubmitButton');
 const feedProfileNotice = document.getElementById('feedProfileNotice');
-const feedCancelEditButton = document.getElementById('feedCancelEditButton');
+const feedEditView = document.getElementById('feedEditView');
+const feedEditForm = document.getElementById('feedEditForm');
+const feedEditTitle = document.getElementById('feedEditTitle');
+const feedEditMessage = document.getElementById('feedEditMessage');
+const feedEditImageFile = document.getElementById('feedEditImageFile');
+const feedEditSaveButton = document.getElementById('feedEditSaveButton');
+const feedEditCloseButton = document.getElementById('feedEditCloseButton');
+const feedEditCancelButton = document.getElementById('feedEditCancelButton');
+const feedEditNotice = document.getElementById('feedEditNotice');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -517,7 +525,7 @@ function renderFeedPosts(posts = []) {
     article.innerHTML = [
       post.imageUrl ? `<img src="${escapeHtml(post.imageUrl)}" alt="">` : '',
       '<div class="feed-post-body">',
-      `<h4>${escapeHtml(post.title || 'UNC Customs')}</h4>`,
+      post.title ? `<h4>${escapeHtml(post.title)}</h4>` : '',
       `<p>${escapeHtml(post.message || '')}</p>`,
       `<small>${escapeHtml(post.authorName || 'UNC Customs')} · ${new Date(post.createdAt).toLocaleString()}</small>`,
       '<div class="feed-post-actions"><button data-feed-edit type="button">Edit</button><button data-feed-delete type="button">Delete</button></div>',
@@ -531,22 +539,19 @@ function renderFeedPosts(posts = []) {
 
 function startFeedPostEdit(post) {
   editingFeedPostId = post.id;
-  document.getElementById('feedTitle').value = post.title || 'UNC Customs';
-  document.getElementById('feedMessage').value = post.message || '';
-  feedImageFile.value = '';
-  feedSubmitButton.textContent = 'Save Post Changes';
-  feedCancelEditButton.classList.remove('hidden');
-  feedNotice.textContent = 'Editing post. Choose a new image only if you want to replace it.';
-  feedForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  feedEditTitle.value = post.title || '';
+  feedEditMessage.value = post.message || '';
+  feedEditImageFile.value = '';
+  feedEditNotice.textContent = 'Choose a new image only if you want to replace the current one.';
+  feedEditView.classList.remove('hidden');
+  feedEditTitle.focus();
 }
 
 function cancelFeedPostEdit() {
   editingFeedPostId = null;
-  feedForm.reset();
-  document.getElementById('feedTitle').value = 'UNC Customs';
-  feedSubmitButton.textContent = 'Publish to UNC Customs';
-  feedCancelEditButton.classList.add('hidden');
-  feedNotice.textContent = '';
+  feedEditForm.reset();
+  feedEditNotice.textContent = '';
+  feedEditView.classList.add('hidden');
 }
 
 async function loadFeed() {
@@ -1026,15 +1031,14 @@ feedForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!canManageFeed()) return;
 
-  feedNotice.textContent = editingFeedPostId ? 'Saving post changes...' : 'Publishing to UNC Customs...';
+  feedNotice.textContent = 'Publishing to UNC Customs...';
   feedSubmitButton.disabled = true;
   try {
     const data = Object.fromEntries(new FormData(feedForm));
     const upload = await readImageFile(feedImageFile.files?.[0]);
-    const response = await api(editingFeedPostId ? '/dashboard/feed/edit' : '/dashboard/feed', {
+    const response = await api('/dashboard/feed', {
       method: 'POST',
       body: JSON.stringify({
-        id: editingFeedPostId,
         title: data.title,
         message: data.message,
         upload
@@ -1043,11 +1047,8 @@ feedForm?.addEventListener('submit', async (event) => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Could not publish the feed post.');
 
-    const wasEditing = Boolean(editingFeedPostId);
-    cancelFeedPostEdit();
-    feedNotice.textContent = wasEditing
-      ? 'Post changes saved for FiveM.'
-      : 'Published to UNC Customs and ready for FiveM.';
+    feedForm.reset();
+    feedNotice.textContent = 'Published to UNC Customs and ready for FiveM.';
     renderFeedPosts(result.posts || []);
   } catch (error) {
     feedNotice.textContent = error.message || 'Could not publish the feed post.';
@@ -1056,7 +1057,40 @@ feedForm?.addEventListener('submit', async (event) => {
   }
 });
 
-feedCancelEditButton?.addEventListener('click', cancelFeedPostEdit);
+feedEditForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageFeed() || !editingFeedPostId) return;
+
+  feedEditNotice.textContent = 'Saving post changes...';
+  feedEditSaveButton.disabled = true;
+  try {
+    const upload = await readImageFile(feedEditImageFile.files?.[0]);
+    const response = await api('/dashboard/feed/edit', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: editingFeedPostId,
+        title: feedEditTitle.value,
+        message: feedEditMessage.value,
+        upload
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not save post changes.');
+
+    cancelFeedPostEdit();
+    renderFeedPosts(result.posts || []);
+  } catch (error) {
+    feedEditNotice.textContent = error.message || 'Could not save post changes.';
+  } finally {
+    feedEditSaveButton.disabled = false;
+  }
+});
+
+feedEditCloseButton?.addEventListener('click', cancelFeedPostEdit);
+feedEditCancelButton?.addEventListener('click', cancelFeedPostEdit);
+feedEditView?.addEventListener('click', (event) => {
+  if (event.target === feedEditView) cancelFeedPostEdit();
+});
 
 feedProfileForm?.addEventListener('submit', async (event) => {
   event.preventDefault();

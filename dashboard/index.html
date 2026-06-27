@@ -236,13 +236,12 @@
                 <form id="feedForm" class="config-panel feed-panel">
                   <h4>Publish Feed Post</h4>
                   <label for="feedTitle">Title</label>
-                  <input id="feedTitle" name="title" type="text" maxlength="120" value="UNC Customs">
+                  <input id="feedTitle" name="title" type="text" maxlength="120" placeholder="Optional title">
                   <label for="feedMessage">Message</label>
                   <textarea id="feedMessage" name="message" rows="5" maxlength="2000" placeholder="Optional message shown in FiveM..."></textarea>
                   <label for="feedImageFile">Upload Image</label>
                   <input id="feedImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
                   <button id="feedSubmitButton" type="submit">Publish to UNC Customs</button>
-                  <button id="feedCancelEditButton" class="hidden" type="button">Cancel Edit</button>
                   <p id="feedNotice" class="form-notice"></p>
                 </form>
               </div>
@@ -250,6 +249,25 @@
                 <h4>Published Posts</h4>
                 <div id="feedPostsList" class="feed-posts"></div>
               </section>
+            </div>
+            <div id="feedEditView" class="feed-edit-overlay hidden">
+              <form id="feedEditForm" class="config-panel feed-edit-panel">
+                <div class="feed-edit-heading">
+                  <h4>Edit Feed Post</h4>
+                  <button id="feedEditCloseButton" type="button" aria-label="Close edit view">×</button>
+                </div>
+                <label for="feedEditTitle">Title</label>
+                <input id="feedEditTitle" name="title" type="text" maxlength="120" placeholder="Optional title">
+                <label for="feedEditMessage">Message</label>
+                <textarea id="feedEditMessage" name="message" rows="6" maxlength="2000" placeholder="Optional message shown in FiveM..."></textarea>
+                <label for="feedEditImageFile">Replace Image</label>
+                <input id="feedEditImageFile" name="imageFile" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+                <div class="feed-edit-actions">
+                  <button id="feedEditSaveButton" type="submit">Save Changes</button>
+                  <button id="feedEditCancelButton" type="button">Cancel</button>
+                </div>
+                <p id="feedEditNotice" class="form-notice"></p>
+              </form>
             </div>
           </section>
 
