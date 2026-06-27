@@ -84,6 +84,7 @@ const feedAvatarFile = document.getElementById('feedAvatarFile');
 const feedAvatarPreview = document.getElementById('feedAvatarPreview');
 const feedProfileSubmitButton = document.getElementById('feedProfileSubmitButton');
 const feedProfileNotice = document.getElementById('feedProfileNotice');
+const feedCancelEditButton = document.getElementById('feedCancelEditButton');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -95,6 +96,7 @@ let spectatePollInFlight = false;
 let firebaseAuth = null;
 let dashboardUser = null;
 let loaManagementMembersLoaded = false;
+let editingFeedPostId = null;
 
 function setAuthState(isAuthed) {
   shell.classList.toggle('locked', !isAuthed);
@@ -518,12 +520,33 @@ function renderFeedPosts(posts = []) {
       `<h4>${escapeHtml(post.title || 'UNC Customs')}</h4>`,
       `<p>${escapeHtml(post.message || '')}</p>`,
       `<small>${escapeHtml(post.authorName || 'UNC Customs')} · ${new Date(post.createdAt).toLocaleString()}</small>`,
-      '<button type="button">Delete</button>',
+      '<div class="feed-post-actions"><button data-feed-edit type="button">Edit</button><button data-feed-delete type="button">Delete</button></div>',
       '</div>'
     ].join('');
-    article.querySelector('button').addEventListener('click', () => deleteFeedPost(post.id));
+    article.querySelector('[data-feed-edit]').addEventListener('click', () => startFeedPostEdit(post));
+    article.querySelector('[data-feed-delete]').addEventListener('click', () => deleteFeedPost(post.id));
     feedPostsList.appendChild(article);
   }
+}
+
+function startFeedPostEdit(post) {
+  editingFeedPostId = post.id;
+  document.getElementById('feedTitle').value = post.title || 'UNC Customs';
+  document.getElementById('feedMessage').value = post.message || '';
+  feedImageFile.value = '';
+  feedSubmitButton.textContent = 'Save Post Changes';
+  feedCancelEditButton.classList.remove('hidden');
+  feedNotice.textContent = 'Editing post. Choose a new image only if you want to replace it.';
+  feedForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelFeedPostEdit() {
+  editingFeedPostId = null;
+  feedForm.reset();
+  document.getElementById('feedTitle').value = 'UNC Customs';
+  feedSubmitButton.textContent = 'Publish to UNC Customs';
+  feedCancelEditButton.classList.add('hidden');
+  feedNotice.textContent = '';
 }
 
 async function loadFeed() {
@@ -1003,14 +1026,15 @@ feedForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!canManageFeed()) return;
 
-  feedNotice.textContent = 'Publishing to UNC Customs...';
+  feedNotice.textContent = editingFeedPostId ? 'Saving post changes...' : 'Publishing to UNC Customs...';
   feedSubmitButton.disabled = true;
   try {
     const data = Object.fromEntries(new FormData(feedForm));
     const upload = await readImageFile(feedImageFile.files?.[0]);
-    const response = await api('/dashboard/feed', {
+    const response = await api(editingFeedPostId ? '/dashboard/feed/edit' : '/dashboard/feed', {
       method: 'POST',
       body: JSON.stringify({
+        id: editingFeedPostId,
         title: data.title,
         message: data.message,
         upload
@@ -1019,9 +1043,11 @@ feedForm?.addEventListener('submit', async (event) => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || 'Could not publish the feed post.');
 
-    feedForm.reset();
-    document.getElementById('feedTitle').value = 'UNC Customs';
-    feedNotice.textContent = 'Published to UNC Customs and ready for FiveM.';
+    const wasEditing = Boolean(editingFeedPostId);
+    cancelFeedPostEdit();
+    feedNotice.textContent = wasEditing
+      ? 'Post changes saved for FiveM.'
+      : 'Published to UNC Customs and ready for FiveM.';
     renderFeedPosts(result.posts || []);
   } catch (error) {
     feedNotice.textContent = error.message || 'Could not publish the feed post.';
@@ -1029,6 +1055,8 @@ feedForm?.addEventListener('submit', async (event) => {
     feedSubmitButton.disabled = false;
   }
 });
+
+feedCancelEditButton?.addEventListener('click', cancelFeedPostEdit);
 
 feedProfileForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
