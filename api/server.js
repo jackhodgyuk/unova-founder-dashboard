@@ -81,6 +81,8 @@ const state = {
   loas: [],
   gameBans: [],
   unovaFeed: [],
+  unovaFeedName: 'UNC Customs',
+  unovaFeedAvatarObject: null,
   stateLoaded: false,
   stateLoadPromise: null,
   firebaseCerts: null,
@@ -166,6 +168,8 @@ function persistentStatePayload() {
     loas: state.loas,
     gameBans: state.gameBans,
     unovaFeed: state.unovaFeed,
+    unovaFeedName: state.unovaFeedName,
+    unovaFeedAvatarObject: state.unovaFeedAvatarObject,
     savedAt: new Date().toISOString()
   };
 }
@@ -203,6 +207,8 @@ async function ensureStateLoaded() {
         state.loas = Array.isArray(stored.loas) ? stored.loas.map(normalizeLoa).filter(Boolean) : [];
         state.gameBans = Array.isArray(stored.gameBans) ? stored.gameBans.map(normalizeGameBan).filter(Boolean) : [];
         state.unovaFeed = Array.isArray(stored.unovaFeed) ? stored.unovaFeed.map(normalizeFeedPost).filter(Boolean) : [];
+        state.unovaFeedName = String(stored.unovaFeedName || 'UNC Customs').trim().slice(0, 80) || 'UNC Customs';
+        state.unovaFeedAvatarObject = String(stored.unovaFeedAvatarObject || '').trim().slice(0, 500) || null;
       }
 
       if (!state.priorityRules.length) {
@@ -1125,6 +1131,8 @@ function normalizeFeedPost(value) {
     message,
     imageObject: String(value.imageObject || '').trim().slice(0, 500) || null,
     imageContentType: String(value.imageContentType || '').trim().slice(0, 100) || null,
+    imageWidth: Math.max(1, Math.min(10000, Number(value.imageWidth) || 0)) || null,
+    imageHeight: Math.max(1, Math.min(10000, Number(value.imageHeight) || 0)) || null,
     authorName: String(value.authorName || 'UNC Customs').trim().slice(0, 120),
     createdAt: value.createdAt || new Date().toISOString()
   };
@@ -1141,6 +1149,12 @@ function publicFeedPosts(origin) {
   }));
 }
 
+function feedImageUrl(origin, imageObject) {
+  return imageObject
+    ? `${origin}/feed/images/${encodeURIComponent(imageObject.split('/').pop())}`
+    : null;
+}
+
 function escapeActivityHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -1152,6 +1166,7 @@ function escapeActivityHtml(value) {
 
 function activityPubActor(origin) {
   const actorId = `${origin}/activitypub/unc-customs`;
+  const displayName = state.unovaFeedName || 'UNC Customs';
   return {
     '@context': [
       'https://www.w3.org/ns/activitystreams',
@@ -1160,8 +1175,8 @@ function activityPubActor(origin) {
     id: actorId,
     type: 'Person',
     preferredUsername: 'unc-customs',
-    name: 'UNC Customs',
-    summary: 'Official UNC Customs feed for Unova Roleplay.',
+    name: displayName,
+    summary: `Official ${displayName} feed for Unova Roleplay.`,
     discoverable: true,
     indexable: true,
     manuallyApprovesFollowers: false,
@@ -1169,7 +1184,7 @@ function activityPubActor(origin) {
     icon: {
       type: 'Image',
       mediaType: 'image/png',
-      url: unovaLogoUrl
+      url: feedImageUrl(origin, state.unovaFeedAvatarObject) || unovaLogoUrl
     },
     inbox: `${actorId}/inbox`,
     outbox: `${actorId}/outbox`,
@@ -1204,8 +1219,8 @@ function activityPubOutbox(origin) {
           mediaType: 'image/*',
           url: post.imageUrl,
           name: post.title || 'UNC Customs image',
-          width: 1200,
-          height: 675
+          width: post.imageWidth || 1200,
+          height: post.imageHeight || 675
         }];
       }
       return {
@@ -1239,8 +1254,8 @@ function activityPubNote(origin, post) {
       mediaType: 'image/*',
       url: post.imageUrl,
       name: post.title || 'UNC Customs image',
-      width: 1200,
-      height: 675
+      width: post.imageWidth || 1200,
+      height: post.imageHeight || 675
     }];
   }
   return note;
@@ -1259,7 +1274,12 @@ async function saveFeedImage(upload, postId) {
     resumable: false,
     metadata: { cacheControl: 'public, max-age=31536000, immutable' }
   });
-  return { imageObject, imageContentType: attachment.contentType };
+  return {
+    imageObject,
+    imageContentType: attachment.contentType,
+    imageWidth: Math.max(1, Math.min(10000, Number(upload.width) || 0)) || null,
+    imageHeight: Math.max(1, Math.min(10000, Number(upload.height) || 0)) || null
+  };
 }
 
 async function createFeedPost(body, user) {
@@ -1272,7 +1292,7 @@ async function createFeedPost(body, user) {
     id,
     title: body.title,
     message,
-    authorName: user.name || 'UNC Customs',
+    authorName: state.unovaFeedName,
     createdAt: new Date().toISOString(),
     ...(image || {})
   });
@@ -1285,6 +1305,25 @@ async function createFeedPost(body, user) {
     `Title: ${post.title}`
   ]);
   return { status: 200, payload: { ok: true, post } };
+}
+
+async function updateFeedProfile(body) {
+  const displayName = String(body.displayName || '').trim().slice(0, 80);
+  if (!displayName) return { status: 400, payload: { error: 'Feed display name is required.' } };
+
+  const previousAvatar = state.unovaFeedAvatarObject;
+  state.unovaFeedName = displayName;
+  if (body.avatarUpload) {
+    const avatar = await saveFeedImage(body.avatarUpload, crypto.randomUUID());
+    if (!avatar) return { status: 400, payload: { error: 'Use a valid profile image.' } };
+    state.unovaFeedAvatarObject = avatar.imageObject;
+  }
+  await savePersistentState();
+
+  if (previousAvatar && previousAvatar !== state.unovaFeedAvatarObject && getStateBucketName()) {
+    await storage.bucket(getStateBucketName()).file(previousAvatar).delete({ ignoreNotFound: true }).catch(() => null);
+  }
+  return { status: 200, payload: { ok: true } };
 }
 
 async function postDashboardAnnouncement(body, user) {
@@ -2150,6 +2189,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && pathname === '/activitypub/unc-customs') {
+    await ensureStateLoaded();
     sendActivityJson(res, 200, activityPubActor(publicOrigin));
     return;
   }
@@ -2220,7 +2260,7 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && pathname === '/fivem/feed') {
     if (!requireFiveM(req, res)) return;
     await ensureStateLoaded();
-    sendJson(res, 200, { posts: publicFeedPosts(publicOrigin) });
+    sendJson(res, 200, { displayName: state.unovaFeedName, posts: publicFeedPosts(publicOrigin) });
     return;
   }
 
@@ -2890,7 +2930,24 @@ async function handleRequest(req, res) {
     const user = await requireDashboardUser(req, res);
     if (!user || !requireDashboardRole(user, res, 'founder')) return;
     await ensureStateLoaded();
-    sendJson(res, 200, { posts: publicFeedPosts(publicOrigin) });
+    sendJson(res, 200, {
+      displayName: state.unovaFeedName,
+      avatarUrl: feedImageUrl(publicOrigin, state.unovaFeedAvatarObject) || unovaLogoUrl,
+      posts: publicFeedPosts(publicOrigin)
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/feed/profile') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+    await ensureStateLoaded();
+    const result = await updateFeedProfile(await readBody(req, 12 * 1024 * 1024));
+    sendJson(res, result.status, {
+      ...result.payload,
+      displayName: state.unovaFeedName,
+      avatarUrl: feedImageUrl(publicOrigin, state.unovaFeedAvatarObject) || unovaLogoUrl
+    });
     return;
   }
 
@@ -2901,6 +2958,7 @@ async function handleRequest(req, res) {
     const result = await createFeedPost(await readBody(req, 12 * 1024 * 1024), user);
     sendJson(res, result.status, {
       ...result.payload,
+      displayName: state.unovaFeedName,
       posts: publicFeedPosts(publicOrigin)
     });
     return;

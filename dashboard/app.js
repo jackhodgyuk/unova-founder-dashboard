@@ -78,6 +78,12 @@ const feedImageFile = document.getElementById('feedImageFile');
 const feedSubmitButton = document.getElementById('feedSubmitButton');
 const feedNotice = document.getElementById('feedNotice');
 const feedPostsList = document.getElementById('feedPostsList');
+const feedDisplayName = document.getElementById('feedDisplayName');
+const feedProfileForm = document.getElementById('feedProfileForm');
+const feedAvatarFile = document.getElementById('feedAvatarFile');
+const feedAvatarPreview = document.getElementById('feedAvatarPreview');
+const feedProfileSubmitButton = document.getElementById('feedProfileSubmitButton');
+const feedProfileNotice = document.getElementById('feedProfileNotice');
 
 let authToken = localStorage.getItem(tokenKey);
 let players = [];
@@ -527,7 +533,10 @@ async function loadFeed() {
     feedPostsList.innerHTML = '<div class="feed-post"><div class="feed-post-body"><p>Could not load the UNC Customs feed.</p></div></div>';
     return;
   }
-  renderFeedPosts((await response.json()).posts || []);
+  const data = await response.json();
+  if (feedDisplayName) feedDisplayName.value = data.displayName || 'UNC Customs';
+  if (feedAvatarPreview && data.avatarUrl) feedAvatarPreview.src = data.avatarUrl;
+  renderFeedPosts(data.posts || []);
 }
 
 async function deleteFeedPost(id) {
@@ -714,11 +723,19 @@ function readImageFile(file) {
     }
 
     const reader = new FileReader();
-    reader.onload = () => resolve({
-      name: file.name,
-      type: file.type,
-      dataUrl: String(reader.result || '')
-    });
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const image = new Image();
+      image.onload = () => resolve({
+        name: file.name,
+        type: file.type,
+        dataUrl,
+        width: image.naturalWidth,
+        height: image.naturalHeight
+      });
+      image.onerror = () => reject(new Error('Could not inspect that image.'));
+      image.src = dataUrl;
+    };
     reader.onerror = () => reject(new Error('Could not read that image.'));
     reader.readAsDataURL(file);
   });
@@ -1010,6 +1027,33 @@ feedForm?.addEventListener('submit', async (event) => {
     feedNotice.textContent = error.message || 'Could not publish the feed post.';
   } finally {
     feedSubmitButton.disabled = false;
+  }
+});
+
+feedProfileForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageFeed()) return;
+
+  feedProfileNotice.textContent = 'Saving feed profile...';
+  feedProfileSubmitButton.disabled = true;
+  try {
+    const data = Object.fromEntries(new FormData(feedProfileForm));
+    const avatarUpload = await readImageFile(feedAvatarFile.files?.[0]);
+    const response = await api('/dashboard/feed/profile', {
+      method: 'POST',
+      body: JSON.stringify({ displayName: data.displayName, avatarUpload })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not save the feed profile.');
+
+    feedDisplayName.value = result.displayName || data.displayName;
+    feedAvatarFile.value = '';
+    if (result.avatarUrl) feedAvatarPreview.src = result.avatarUrl;
+    feedProfileNotice.textContent = 'Feed profile saved for FiveM.';
+  } catch (error) {
+    feedProfileNotice.textContent = error.message || 'Could not save the feed profile.';
+  } finally {
+    feedProfileSubmitButton.disabled = false;
   }
 });
 
