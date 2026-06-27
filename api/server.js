@@ -1203,7 +1203,9 @@ function activityPubOutbox(origin) {
           type: 'Image',
           mediaType: 'image/*',
           url: post.imageUrl,
-          name: post.title || 'UNC Customs image'
+          name: post.title || 'UNC Customs image',
+          width: 1200,
+          height: 675
         }];
       }
       return {
@@ -1236,7 +1238,9 @@ function activityPubNote(origin, post) {
       type: 'Image',
       mediaType: 'image/*',
       url: post.imageUrl,
-      name: post.title || 'UNC Customs image'
+      name: post.title || 'UNC Customs image',
+      width: 1200,
+      height: 675
     }];
   }
   return note;
@@ -2127,13 +2131,14 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && pathname === '/.well-known/webfinger') {
-    const expected = `acct:unc-customs@${req.headers.host}`;
-    if (requestUrl.searchParams.get('resource') !== expected) {
+    const handle = `unc-customs@${req.headers.host}`;
+    const resource = requestUrl.searchParams.get('resource');
+    if (resource !== handle && resource !== `acct:${handle}`) {
       sendJson(res, 404, { error: 'ActivityPub account not found.' });
       return;
     }
     sendJrdJson(res, 200, {
-      subject: expected,
+      subject: `acct:${handle}`,
       aliases: [`${publicOrigin}/activitypub/unc-customs`],
       links: [{
         rel: 'self',
