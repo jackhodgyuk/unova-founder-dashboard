@@ -131,6 +131,22 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function sendActivityJson(res, status, payload) {
+  res.writeHead(status, {
+    'Content-Type': 'application/activity+json; charset=utf-8',
+    'Cache-Control': 'public, max-age=60'
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function sendJrdJson(res, status, payload) {
+  res.writeHead(status, {
+    'Content-Type': 'application/jrd+json; charset=utf-8',
+    'Cache-Control': 'public, max-age=300'
+  });
+  res.end(JSON.stringify(payload));
+}
+
 function sendText(res, status, body, contentType = 'text/plain; charset=utf-8') {
   res.writeHead(status, { 'Content-Type': contentType });
   res.end(body);
@@ -1125,6 +1141,104 @@ function publicFeedPosts(origin) {
   }));
 }
 
+function escapeActivityHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function activityPubActor(origin) {
+  const actorId = `${origin}/activitypub/unc-customs`;
+  return {
+    '@context': [
+      'https://www.w3.org/ns/activitystreams',
+      'https://w3id.org/security/v1'
+    ],
+    id: actorId,
+    type: 'Service',
+    preferredUsername: 'unc-customs',
+    name: 'UNC Customs',
+    summary: 'Official UNC Customs feed for Unova Roleplay.',
+    url: `${origin}/feed`,
+    icon: {
+      type: 'Image',
+      mediaType: 'image/png',
+      url: unovaLogoUrl
+    },
+    inbox: `${actorId}/inbox`,
+    outbox: `${actorId}/outbox`,
+    followers: `${actorId}/followers`
+  };
+}
+
+function activityPubOutbox(origin) {
+  const actorId = `${origin}/activitypub/unc-customs`;
+  const posts = publicFeedPosts(origin);
+  return {
+    '@context': 'https://www.w3.org/ns/activitystreams',
+    id: `${actorId}/outbox`,
+    type: 'OrderedCollection',
+    totalItems: posts.length,
+    orderedItems: posts.map((post) => {
+      const noteId = `${actorId}/posts/${post.id}`;
+      const title = escapeActivityHtml(post.title || 'UNC Customs');
+      const message = escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>');
+      const note = {
+        id: noteId,
+        type: 'Note',
+        attributedTo: actorId,
+        published: post.createdAt,
+        url: `${origin}/feed#${post.id}`,
+        to: ['https://www.w3.org/ns/activitystreams#Public'],
+        content: `<p><strong>${title}</strong></p><p>${message}</p>`
+      };
+      if (post.imageUrl) {
+        note.attachment = [{
+          type: 'Image',
+          mediaType: 'image/*',
+          url: post.imageUrl,
+          name: post.title || 'UNC Customs image'
+        }];
+      }
+      return {
+        id: `${noteId}/activity`,
+        type: 'Create',
+        actor: actorId,
+        published: post.createdAt,
+        to: ['https://www.w3.org/ns/activitystreams#Public'],
+        object: note
+      };
+    })
+  };
+}
+
+function activityPubNote(origin, post) {
+  const actorId = `${origin}/activitypub/unc-customs`;
+  const noteId = `${actorId}/posts/${post.id}`;
+  const note = {
+    '@context': 'https://www.w3.org/ns/activitystreams',
+    id: noteId,
+    type: 'Note',
+    attributedTo: actorId,
+    published: post.createdAt,
+    url: `${origin}/feed#${post.id}`,
+    to: ['https://www.w3.org/ns/activitystreams#Public'],
+    content: `<p><strong>${escapeActivityHtml(post.title || 'UNC Customs')}</strong></p><p>${escapeActivityHtml(post.message).replace(/\r?\n/g, '<br>')}</p>`
+  };
+  if (post.imageUrl) {
+    note.attachment = [{
+      type: 'Image',
+      mediaType: 'image/*',
+      url: post.imageUrl,
+      name: post.title || 'UNC Customs image'
+    }];
+  }
+  return note;
+}
+
 async function saveFeedImage(upload, postId) {
   const attachment = normalizeAnnouncementAttachment(upload);
   if (!attachment) return null;
@@ -2006,6 +2120,64 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && pathname === '/feed') {
     await ensureStateLoaded();
     sendJson(res, 200, { posts: publicFeedPosts(publicOrigin), updatedAt: new Date().toISOString() });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/.well-known/webfinger') {
+    const expected = `acct:unc-customs@${req.headers.host}`;
+    if (requestUrl.searchParams.get('resource') !== expected) {
+      sendJson(res, 404, { error: 'ActivityPub account not found.' });
+      return;
+    }
+    sendJrdJson(res, 200, {
+      subject: expected,
+      aliases: [`${publicOrigin}/activitypub/unc-customs`],
+      links: [{
+        rel: 'self',
+        type: 'application/activity+json',
+        href: `${publicOrigin}/activitypub/unc-customs`
+      }]
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/activitypub/unc-customs') {
+    sendActivityJson(res, 200, activityPubActor(publicOrigin));
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/activitypub/unc-customs/outbox') {
+    await ensureStateLoaded();
+    sendActivityJson(res, 200, activityPubOutbox(publicOrigin));
+    return;
+  }
+
+  const activityPubPostMatch = pathname.match(/^\/activitypub\/unc-customs\/posts\/([a-f0-9-]+)$/i);
+  if (req.method === 'GET' && activityPubPostMatch) {
+    await ensureStateLoaded();
+    const post = publicFeedPosts(publicOrigin).find((item) => item.id === activityPubPostMatch[1]);
+    if (!post) {
+      sendActivityJson(res, 404, { error: 'Post not found.' });
+      return;
+    }
+    sendActivityJson(res, 200, activityPubNote(publicOrigin, post));
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/activitypub/unc-customs/followers') {
+    sendActivityJson(res, 200, {
+      '@context': 'https://www.w3.org/ns/activitystreams',
+      id: `${publicOrigin}/activitypub/unc-customs/followers`,
+      type: 'OrderedCollection',
+      totalItems: 0,
+      orderedItems: []
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/activitypub/unc-customs/inbox') {
+    res.writeHead(202);
+    res.end();
     return;
   }
 
