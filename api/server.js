@@ -21,13 +21,14 @@ const firebasePublicConfigFallback = {
   measurementId: 'G-196R8VL78F'
 };
 const dashboardRoleRank = {
-  staff: 1,
-  senior_staff: 2,
-  staff_manager: 3,
-  server_manager: 4,
-  co_owner: 5,
-  owner: 6,
-  founder: 7
+  trial_staff: 1,
+  staff: 2,
+  senior_staff: 3,
+  staff_manager: 4,
+  server_manager: 5,
+  co_owner: 6,
+  owner: 7,
+  founder: 8
 };
 const firebaseReservedClaims = new Set([
   'iss',
@@ -48,6 +49,15 @@ const ticketAllow = [
   1024n, // ViewChannel
   2048n, // SendMessages
   65536n, // ReadMessageHistory
+  32768n, // AttachFiles
+  16384n // EmbedLinks
+].reduce((value, permission) => value | permission, 0n).toString();
+const ticketViewOnly = [
+  1024n, // ViewChannel
+  65536n // ReadMessageHistory
+].reduce((value, permission) => value | permission, 0n).toString();
+const ticketWriteDeny = [
+  2048n, // SendMessages
   32768n, // AttachFiles
   16384n // EmbedLinks
 ].reduce((value, permission) => value | permission, 0n).toString();
@@ -562,8 +572,8 @@ async function requireDashboardUser(req, res) {
     if (!hasDashboardAccess(user)) {
       sendJson(res, 403, {
         error: 'Firebase dashboard role required.',
-      message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, or staff.',
-        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff']
+        message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, staff, or trial_staff.',
+        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff', 'trial_staff']
       });
       return null;
     }
@@ -617,43 +627,71 @@ function hasAnyRole(memberRoleIds, allowedRoleIds) {
 
 function getManagementRoleIds() {
   return cleanIdList(
-    process.env.MANAGEMENT_ROLE_ID,
-    process.env.MANAGEMENT_ROLE_IDS,
-    process.env.DISCORD_MANAGEMENT_ROLE_ID
+    process.env.TRIAL_STAFF_ROLE_ID,
+    process.env.TRIAL_STAFF_ROLE_IDS,
+    '1497407009660731505',
+    process.env.STAFF_ROLE_ID,
+    process.env.STAFF_ROLE_IDS,
+    '1450779514476040253',
+    process.env.SENIOR_STAFF_ROLE_ID,
+    process.env.SENIOR_STAFF_ROLE_IDS,
+    '1450779565273251890',
+    process.env.STAFF_MANAGER_ROLE_ID,
+    process.env.STAFF_MANAGER_ROLE_IDS,
+    '1469445626059030720',
+    process.env.SERVER_MANAGER_ROLE_ID,
+    process.env.SERVER_MANAGER_ROLE_IDS,
+    process.env.DEVELOPER_ROLE_ID,
+    process.env.DEVELOPER_ROLE_IDS,
+    '1450751628956270644',
+    process.env.HEAD_DEVELOPER_ROLE_ID,
+    process.env.HEAD_DEVELOPER_ROLE_IDS,
+    '1450778341371281563',
+    process.env.CO_OWNER_ROLE_ID,
+    process.env.CO_OWNER_ROLE_IDS,
+    '1453698743797940277',
+    process.env.OWNER_ROLE_ID,
+    process.env.OWNER_ROLE_IDS,
+    '1450604430847377569',
+    process.env.FOUNDER_ROLE_ID,
+    process.env.FOUNDER_ROLE_IDS,
+    '1480636794151108638'
   );
 }
 
 function getTicketAccessRoleIds() {
   return cleanIdList(
-    process.env.MANAGEMENT_ROLE_ID,
-    process.env.MANAGEMENT_ROLE_IDS,
     process.env.TICKET_ACCESS_ROLE_IDS
   );
 }
 
 function getStaffRoleIds() {
   return cleanIdList(
+    process.env.TRIAL_STAFF_ROLE_ID,
+    process.env.TRIAL_STAFF_ROLE_IDS,
+    '1497407009660731505',
     process.env.STAFF_ROLE_ID,
-    process.env.STAFF_ROLE_IDS
+    process.env.STAFF_ROLE_IDS,
+    '1450779514476040253'
   );
 }
 
 function managementLadderRoleConfig() {
   return {
-    management: {
-      ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
-      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES, 'Management', 'Unova Management']
+    trial_staff: {
+      ids: [process.env.TRIAL_STAFF_ROLE_ID, process.env.TRIAL_STAFF_ROLE_IDS, '1497407009660731505'],
+      names: [process.env.TRIAL_STAFF_ROLE_NAME, process.env.TRIAL_STAFF_ROLE_NAMES, 'Trial Staff']
     },
     staff: {
-      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
+      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS, '1450779514476040253'],
       names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES, 'Staff']
     },
     senior_staff: {
-      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS],
+      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS, '1450779565273251890'],
       names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES, 'Senior Staff']
     },
     staff_manager: {
-      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS],
+      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS, '1469445626059030720'],
       names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES, 'Staff Manager']
     },
     server_manager: {
@@ -661,15 +699,15 @@ function managementLadderRoleConfig() {
       names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES, 'Server Manager']
     },
     co_owner: {
-      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS],
+      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS, '1453698743797940277'],
       names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES, 'Co Owner', 'Co-Owner', 'Co Owner(s)', 'Co-Owners']
     },
     owner: {
-      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS],
+      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS, '1450604430847377569'],
       names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES, 'Owner', 'Owners']
     },
     founder: {
-      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS],
+      ids: [process.env.FOUNDER_ROLE_ID, process.env.FOUNDER_ROLE_IDS, '1480636794151108638'],
       names: [process.env.FOUNDER_ROLE_NAME, process.env.FOUNDER_ROLE_NAMES, 'Founder', 'Founders']
     },
     developer: {
@@ -744,7 +782,18 @@ function getTicketCategoryName() {
   return process.env.DISCORD_TICKET_CATEGORY_NAME || process.env.TICKET_CATEGORY_NAME || 'tickets';
 }
 
-function buildTicketOverwrites(extraUserIds = [], allowedRoleIds = getTicketAccessRoleIds()) {
+function getLeadershipViewOnlyRoleIds() {
+  return cleanIdList(
+    process.env.OWNER_ROLE_ID,
+    process.env.OWNER_ROLE_IDS,
+    '1450604430847377569',
+    process.env.FOUNDER_ROLE_ID,
+    process.env.FOUNDER_ROLE_IDS,
+    '1480636794151108638'
+  );
+}
+
+function buildTicketOverwrites(extraUserIds = [], allowedRoleIds = getTicketAccessRoleIds(), viewOnlyRoleIds = []) {
   const guildId = cleanId(process.env.DISCORD_GUILD_ID);
   const botRoleId = cleanId(process.env.DISCORD_BOT_ROLE_ID);
   const botUserId = cleanId(process.env.DISCORD_BOT_USER_ID);
@@ -763,6 +812,9 @@ function buildTicketOverwrites(extraUserIds = [], allowedRoleIds = getTicketAcce
   addOverwrite(guildId, 0, null, ticketDenyView);
   for (const roleId of allowedRoleIds) {
     addOverwrite(roleId, 0, ticketAllow, null);
+  }
+  for (const roleId of viewOnlyRoleIds) {
+    addOverwrite(roleId, 0, ticketViewOnly, ticketWriteDeny);
   }
   addOverwrite(botRoleId, 0, ticketAllow, null);
   addOverwrite(botUserId, 1, ticketAllow, null);
@@ -985,12 +1037,7 @@ async function memberHasManagementAccess(discordId) {
   const member = await getDiscordMember(token, guildId, userId).catch(() => null);
   if (!member) return false;
 
-  const allowedRoleIds = await resolveConfiguredRoleIds(
-    token,
-    guildId,
-    [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
-    [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES]
-  );
+  const allowedRoleIds = await resolveManagementLadderRoleIds(token, guildId);
   return hasAnyRole(member.roles || [], allowedRoleIds);
 }
 
@@ -1047,11 +1094,15 @@ async function fetchDiscordUserLabel(userId) {
 }
 
 function makeManagementMentionLine() {
-  const roleIds = getManagementRoleIds();
+  const roleIds = cleanIdList(
+    process.env.TRIAL_STAFF_ROLE_ID,
+    process.env.TRIAL_STAFF_ROLE_IDS,
+    '1497407009660731505'
+  );
   if (roleIds.length) {
-    return `Management role: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
+    return `Trial staff: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
   }
-  return 'Management role: not configured';
+  return 'Trial staff role: not configured';
 }
 
 async function logDiscordAction(lines) {
@@ -1999,8 +2050,12 @@ async function createDiscordPlayerReportTicket(report) {
   const body = {
     name: channelName,
     type: 0,
-    topic: `unova-support-ticket | kind=player_report | level=staff | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
-    permission_overwrites: buildTicketOverwrites([reporterDiscordId].filter(Boolean), reportAccessRoleIds)
+    topic: `unova-support-ticket | kind=player_report | level=trial_staff | opener=${report.reporterDiscordId || 'unknown'} | source=fivem-report | locked=false`,
+    permission_overwrites: buildTicketOverwrites(
+      [reporterDiscordId].filter(Boolean),
+      reportAccessRoleIds,
+      getLeadershipViewOnlyRoleIds()
+    )
   };
 
   const categoryId = await resolveTicketCategoryId(token, guildId).catch(() => null);
@@ -2033,7 +2088,7 @@ async function createDiscordPlayerReportTicket(report) {
       guildId,
       channelName: channel.name,
       kind: 'player_report',
-      level: 'staff',
+      level: 'trial_staff',
       openerId: reporterDiscordId,
       openerName: report.reporterName,
       targetId: offenderDiscordId,
@@ -2317,8 +2372,8 @@ async function handleRequest(req, res) {
     if (!hasDashboardAccess(firebaseUser)) {
       sendJson(res, 403, {
         error: 'Firebase dashboard role required.',
-        message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, or staff.',
-        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff']
+        message: 'Set a Firebase custom claim: unovaRole founder, owner, co_owner, server_manager, staff_manager, senior_staff, staff, or trial_staff.',
+        requiredRoles: ['founder', 'owner', 'co_owner', 'server_manager', 'staff_manager', 'senior_staff', 'staff', 'trial_staff']
       });
       return;
     }
@@ -2905,6 +2960,22 @@ async function handleRequest(req, res) {
       ]);
     }
     sendJson(res, 200, { ok: true, bans: await getGameBans(true) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/bans/clear-history') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const removedCount = (await getGameBans(true)).length;
+    state.gameBans = [];
+    await savePersistentState();
+    await logDiscordAction([
+      '**Dashboard Ban History Cleared**',
+      `Actor: ${user.name || user.uid} (${user.role})`,
+      `Records cleared: ${removedCount}`
+    ]);
+    sendJson(res, 200, { ok: true, cleared: removedCount, bans: [] });
     return;
   }
 

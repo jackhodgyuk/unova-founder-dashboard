@@ -365,7 +365,10 @@
           <section id="bansView" class="actions-view hidden">
             <div class="section-heading">
               <h3>Ban List</h3>
-              <span>Founder and owner access</span>
+              <div class="heading-actions">
+                <span>Founder and owner access</span>
+                <button id="clearBanHistoryButton" class="danger-button hidden" type="button">Clear History</button>
+              </div>
             </div>
             <form id="banForm" class="config-panel ban-panel">
               <h4>Add Game Ban</h4>
@@ -428,7 +431,7 @@
                 <div><span>Remove</span><b>ADMIN_UI_ROLE_IDS</b></div>
                 <div><span>Remove</span><b>DASHBOARD_*_EMAILS</b></div>
                 <div><span>Use</span><b>Firebase custom claims</b></div>
-                <div><span>Keep</span><b>MANAGEMENT_ROLE_ID</b></div>
+                <div><span>Keep</span><b>TRIAL_STAFF_ROLE_ID through FOUNDER_ROLE_ID</b></div>
                 <div><span>Keep</span><b>FOUNDER_ROLE_ID / FOUNDER_DISCORD_ID</b></div>
               </div>
             </div>

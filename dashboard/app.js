@@ -69,6 +69,7 @@ const banForm = document.getElementById('banForm');
 const bansList = document.getElementById('bansList');
 const banNotice = document.getElementById('banNotice');
 const banSubmitButton = document.getElementById('banSubmitButton');
+const clearBanHistoryButton = document.getElementById('clearBanHistoryButton');
 const announcementForm = document.getElementById('announcementForm');
 const announcementNotice = document.getElementById('announcementNotice');
 const announcementSubmitButton = document.getElementById('announcementSubmitButton');
@@ -160,6 +161,10 @@ function canManageBans() {
   return roleRank(dashboardUser?.role) >= roleRank('owner');
 }
 
+function canClearBanHistory() {
+  return dashboardUser?.role === 'founder';
+}
+
 function describeFirebaseError(error) {
   const code = error?.code || 'unknown';
   const messages = {
@@ -239,6 +244,7 @@ function renderStatus(data) {
     loaRequestForm?.classList.toggle('hidden', !dashboardUser.role || dashboardUser.role === 'founder');
     ticketsNavButton.classList.toggle('hidden', !canViewTickets());
     bansNavButton.classList.toggle('hidden', !canManageBans());
+    clearBanHistoryButton?.classList.toggle('hidden', !canClearBanHistory());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     feedNavButton.classList.toggle('hidden', !canManageFeed());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
@@ -593,6 +599,28 @@ async function removeBan(id) {
   if (response?.ok) await loadBans();
 }
 
+async function clearBanHistory() {
+  if (!canClearBanHistory()) return;
+  const confirmed = window.confirm('Clear all dashboard ban history? This removes active and removed game ban records.');
+  if (!confirmed) return;
+
+  banNotice.textContent = 'Clearing ban history...';
+  clearBanHistoryButton.disabled = true;
+
+  try {
+    const response = await api('/dashboard/bans/clear-history', { method: 'POST' });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not clear ban history.');
+
+    banNotice.textContent = `Ban history cleared. ${result.cleared || 0} record${result.cleared === 1 ? '' : 's'} removed.`;
+    renderBans(result.bans || []);
+  } catch (error) {
+    banNotice.textContent = error.message || 'Could not clear ban history.';
+  } finally {
+    clearBanHistoryButton.disabled = false;
+  }
+}
+
 async function decideLoa(discordId, decision) {
   if (dashboardUser?.role !== 'founder') return;
   const response = await api(`/dashboard/loas/${decision}`, {
@@ -929,6 +957,8 @@ banForm?.addEventListener('submit', async (event) => {
     banSubmitButton.disabled = false;
   }
 });
+
+clearBanHistoryButton?.addEventListener('click', clearBanHistory);
 
 founderLoaForm?.addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -302,6 +302,49 @@ local function presentBannedCard(deferrals, ban)
     end
 end
 
+local queuePosition
+local urlEncode
+
+local function holdQueueCard(deferrals, entry, status, holdMs, startedAt)
+    local maxPlayers = GetConvarInt('sv_maxclients', 64)
+    local elapsed = 0
+    local interval = 2500
+
+    while elapsed < holdMs do
+        local position = queuePosition(entry.src)
+        local online = #GetPlayers()
+        local waited = startedAt and (os.time() - startedAt) or math.floor(elapsed / 1000)
+        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, status)
+        local waitFor = math.min(interval, holdMs - elapsed)
+        Wait(waitFor)
+        elapsed = elapsed + waitFor
+    end
+end
+
+local function checkGameBan(license, discordId, deferrals, entry, startedAt, cb)
+    local completed = false
+    local result = nil
+
+    PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license) .. '&discordId=' .. urlEncode(discordId or '')), function(status, body)
+        if status == 200 and body then
+            local data = json.decode(body)
+            if data and data.banned then
+                result = data.ban or {}
+            end
+        end
+        completed = true
+    end, 'GET', '', { ['x-api-key'] = API_KEY })
+
+    local waitedMs = 0
+    while not completed and waitedMs < 10000 do
+        deferrals.update('Checking Unova city access records...')
+        Wait(1000)
+        waitedMs = waitedMs + 1000
+    end
+
+    cb(result)
+end
+
 local function postSpectateFrame(sessionId, image, errorMessage)
     PerformHttpRequest(apiUrl('/fivem/spectate/frame'), function(status, body, _, errorData)
         spectateCaptureInFlight[tostring(sessionId)] = nil
@@ -318,7 +361,7 @@ local function postSpectateFrame(sessionId, image, errorMessage)
     })
 end
 
-local function urlEncode(value)
+function urlEncode(value)
     return tostring(value or ''):gsub('([^%w%-_%.~])', function(char)
         return string.format('%%%02X', string.byte(char))
     end)
@@ -341,12 +384,18 @@ local function sortQueue()
     end)
 end
 
-local function queuePosition(src)
+function queuePosition(src)
     sortQueue()
     for index, entry in ipairs(connectingQueue) do
         if entry.src == src then return index end
     end
     return 1
+end
+
+local function isQueueRequired(src)
+    local maxPlayers = GetConvarInt('sv_maxclients', 64)
+    local online = #GetPlayers()
+    return queuePosition(src) > 1 or online >= maxPlayers
 end
 
 local function fetchPriority(discordId, cb)
@@ -1037,59 +1086,66 @@ AddEventHandler('playerConnecting', function(name, setKickReason, deferrals)
         return
     end
 
-    fetchPriority(discordId, function(priority)
-        queueSerial = queueSerial + 1
-        local entry = {
-            src = src,
-            name = name,
-            discordId = discordId,
-            priority = priority.points or 0,
-            label = priority.label or 'Standard Queue',
-            joinedAt = queueSerial
-        }
-        table.insert(connectingQueue, entry)
+    queueSerial = queueSerial + 1
+    local entry = {
+        src = src,
+        name = name,
+        discordId = discordId,
+        priority = 0,
+        label = 'Standard Queue',
+        joinedAt = queueSerial
+    }
+    table.insert(connectingQueue, entry)
 
-        CreateThread(function()
+    CreateThread(function()
+        local startedAt = os.time()
+        local priorityLoaded = false
+
+        fetchPriority(discordId, function(priority)
+            entry.priority = priority.points or 0
+            entry.label = priority.label or 'Standard Queue'
+            priorityLoaded = true
+        end)
+
+        checkGameBan(license, discordId, deferrals, entry, startedAt, function(ban)
+            if ban then
+                removeQueueEntry(src)
+                presentBannedCard(deferrals, ban)
+                return
+            end
+
             local maxPlayers = GetConvarInt('sv_maxclients', 64)
-            local startedAt = os.time()
-            local position = queuePosition(src)
-            local online = #GetPlayers()
+            if not isQueueRequired(src) then
+                removeQueueEntry(src)
+                deferrals.done()
+                return
+            end
 
-            presentQueueCard(deferrals, entry, position, online, maxPlayers, 0, 'Queue verified. Preparing your Unova city access.')
-            Wait(math.max(10000, QUEUE_CARD_HOLD_MS))
+            holdQueueCard(deferrals, entry, 'Queue verified. Preparing your Unova city access.', math.max(10000, QUEUE_CARD_HOLD_MS), startedAt)
 
-            PerformHttpRequest(apiUrl('/fivem/bans/check?license=' .. urlEncode(license) .. '&discordId=' .. urlEncode(discordId or '')), function(status, body)
-                if status == 200 and body then
-                    local data = json.decode(body)
-                    if data and data.banned then
-                        removeQueueEntry(src)
-                        presentBannedCard(deferrals, data.ban or {})
-                        return
-                    end
+            if not priorityLoaded then
+                holdQueueCard(deferrals, entry, 'Finalising your queue priority.', 2000, startedAt)
+            end
+
+            while true do
+                local position = queuePosition(src)
+                local online = #GetPlayers()
+                local waited = os.time() - startedAt
+
+                if position <= 1 and online < maxPlayers then
+                    removeQueueEntry(src)
+                    deferrals.done()
+                    return
                 end
 
-                while true do
-                    position = queuePosition(src)
-                    online = #GetPlayers()
-                    local waited = os.time() - startedAt
-
-                    if position <= 1 and online < maxPlayers then
-                        removeQueueEntry(src)
-                        presentQueueCard(deferrals, entry, position, online, maxPlayers, waited, 'Queue cleared. Preparing your route into Unova City.')
-                        Wait(math.max(10000, QUEUE_CARD_HOLD_MS))
-                        deferrals.done()
-                        return
-                    end
-
-                    if waited > 180 then
-                        removeQueueEntry(src)
-                        deferrals.done('Connection queue timed out. Please reconnect to Unova.')
-                        return
-                    end
-
-                    Wait(2500)
+                if waited > 180 then
+                    removeQueueEntry(src)
+                    deferrals.done('Connection queue timed out. Please reconnect to Unova.')
+                    return
                 end
-            end, 'GET', '', { ['x-api-key'] = API_KEY })
+
+                holdQueueCard(deferrals, entry, 'Queue active. Waiting for your city slot.', 5000, startedAt)
+            end
         end)
     end)
 end)

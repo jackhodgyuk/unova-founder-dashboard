@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
@@ -33,6 +34,7 @@ const configuredBotRoleId = process.env.DISCORD_BOT_ROLE_ID;
 const configuredBotUserId = process.env.DISCORD_BOT_USER_ID;
 const dashboardUrl = process.env.DASHBOARD_URL || `http://127.0.0.1:${process.env.PORT || 8080}`;
 const whitelistedRoleId = process.env.WHITELISTED_ROLE_ID;
+const nonWhitelistedRoleId = process.env.NON_WHITELISTED_ROLE_ID || '1496545853299753245';
 const businessOwnerRoleId = process.env.BUSINESS_OWNER_ROLE_ID || '1483451364703998005';
 const pdRoleId = process.env.PD_ROLE_ID || '1475496342296989696';
 const uhsRoleId = process.env.UHS_ROLE_ID;
@@ -41,6 +43,7 @@ const silverPrioRoleId = process.env.SILVER_PRIO_ROLE_ID || '1481664036838965339
 const goldPrioRoleId = process.env.GOLD_PRIO_ROLE_ID || '1481664094661644308';
 const botDisplayName = process.env.DISCORD_BOT_DISPLAY_NAME || 'Unova Management';
 const defaultLogChannelId = '1451550213595467889';
+const ticketTranscriptChannelId = process.env.DISCORD_TICKET_TRANSCRIPT_CHANNEL_ID || '1473618045967794319';
 const welcomeChannelId = process.env.DISCORD_WELCOME_CHANNEL_ID || '1450604376505974897';
 const loaChannelId = process.env.DISCORD_LOA_CHANNEL_ID || '1512627150623080551';
 const whitelistChannelName = process.env.DISCORD_WHITELIST_CHANNEL_NAME || 'whitelist-management';
@@ -59,10 +62,6 @@ const founderRoleId = '1480636794151108638';
 
 if (!guildId || guildId === 'your_discord_server_id') {
   console.warn('DISCORD_GUILD_ID is not configured. Slash commands will not be registered.');
-}
-
-if (!process.env.MANAGEMENT_ROLE_ID && !process.env.MANAGEMENT_ROLE_IDS && !process.env.MANAGEMENT_ROLE_NAME && !process.env.MANAGEMENT_ROLE_NAMES) {
-  console.warn('MANAGEMENT_ROLE_ID or MANAGEMENT_ROLE_NAME is required for management bot and city permissions.');
 }
 
 const client = new Client({
@@ -97,12 +96,13 @@ const ticketWriteDeny = [
   PermissionFlagsBits.AttachFiles,
   PermissionFlagsBits.EmbedLinks
 ];
-const rankOrder = ['whitelisted', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
-const protectedRankOrder = ['founder', 'owner', 'co_owner', 'head_developer', 'developer', 'server_manager', 'staff_manager', 'senior_staff', 'staff', 'whitelisted'];
-const supportTicketLevels = ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
+const rankOrder = ['whitelisted', 'trial_staff', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
+const protectedRankOrder = ['founder', 'owner', 'co_owner', 'head_developer', 'developer', 'server_manager', 'staff_manager', 'senior_staff', 'staff', 'trial_staff', 'whitelisted'];
+const supportTicketLevels = ['trial_staff', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'developer', 'head_developer', 'co_owner', 'owner', 'founder'];
 const bugTicketLevels = ['developer', 'head_developer', 'co_owner', 'owner', 'founder'];
 const ticketLevelLabels = {
   whitelisted: 'Whitelisted',
+  trial_staff: 'Trial Staff',
   staff: 'Staff',
   senior_staff: 'Senior Staff',
   staff_manager: 'Staff Manager',
@@ -146,24 +146,24 @@ function roleIdsByName(guild, ...nameValues) {
 
 function roleGroupIds(guild, group) {
   const groups = {
-    management: {
-      ids: [process.env.MANAGEMENT_ROLE_ID, process.env.MANAGEMENT_ROLE_IDS, process.env.DISCORD_MANAGEMENT_ROLE_ID],
-      names: [process.env.MANAGEMENT_ROLE_NAME, process.env.MANAGEMENT_ROLE_NAMES, 'Management', 'Unova Management']
-    },
     whitelisted: {
       ids: [process.env.WHITELISTED_ROLE_ID, process.env.WHITELISTED_ROLE_IDS],
       names: [process.env.WHITELISTED_ROLE_NAME, process.env.WHITELISTED_ROLE_NAMES, 'Whitelisted', 'Allowlisted']
     },
+    trial_staff: {
+      ids: [process.env.TRIAL_STAFF_ROLE_ID, process.env.TRIAL_STAFF_ROLE_IDS, '1497407009660731505'],
+      names: [process.env.TRIAL_STAFF_ROLE_NAME, process.env.TRIAL_STAFF_ROLE_NAMES, 'Trial Staff']
+    },
     staff: {
-      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS],
+      ids: [process.env.STAFF_ROLE_ID, process.env.STAFF_ROLE_IDS, '1450779514476040253'],
       names: [process.env.STAFF_ROLE_NAME, process.env.STAFF_ROLE_NAMES, 'Staff']
     },
     senior_staff: {
-      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS],
+      ids: [process.env.SENIOR_STAFF_ROLE_ID, process.env.SENIOR_STAFF_ROLE_IDS, '1450779565273251890'],
       names: [process.env.SENIOR_STAFF_ROLE_NAME, process.env.SENIOR_STAFF_ROLE_NAMES, 'Senior Staff']
     },
     staff_manager: {
-      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS],
+      ids: [process.env.STAFF_MANAGER_ROLE_ID, process.env.STAFF_MANAGER_ROLE_IDS, '1469445626059030720'],
       names: [process.env.STAFF_MANAGER_ROLE_NAME, process.env.STAFF_MANAGER_ROLE_NAMES, 'Staff Manager']
     },
     server_manager: {
@@ -171,11 +171,11 @@ function roleGroupIds(guild, group) {
       names: [process.env.SERVER_MANAGER_ROLE_NAME, process.env.SERVER_MANAGER_ROLE_NAMES, 'Server Manager']
     },
     co_owner: {
-      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS],
+      ids: [process.env.CO_OWNER_ROLE_ID, process.env.CO_OWNER_ROLE_IDS, '1453698743797940277'],
       names: [process.env.CO_OWNER_ROLE_NAME, process.env.CO_OWNER_ROLE_NAMES, 'Co Owner', 'Co-Owner', 'Co Owner(s)', 'Co-Owners']
     },
     owner: {
-      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS],
+      ids: [process.env.OWNER_ROLE_ID, process.env.OWNER_ROLE_IDS, '1450604430847377569'],
       names: [process.env.OWNER_ROLE_NAME, process.env.OWNER_ROLE_NAMES, 'Owner', 'Owners']
     },
     founder: {
@@ -211,12 +211,22 @@ function privilegedOverrideRoleIds(guild) {
 }
 
 function managementRoleIds(guild) {
-  return roleGroupIds(guild, 'management');
+  return cleanIdList(
+    roleGroupIds(guild, 'trial_staff').join(','),
+    roleGroupIds(guild, 'staff').join(','),
+    roleGroupIds(guild, 'senior_staff').join(','),
+    roleGroupIds(guild, 'staff_manager').join(','),
+    roleGroupIds(guild, 'server_manager').join(','),
+    roleGroupIds(guild, 'developer').join(','),
+    roleGroupIds(guild, 'head_developer').join(','),
+    roleGroupIds(guild, 'co_owner').join(','),
+    roleGroupIds(guild, 'owner').join(','),
+    roleGroupIds(guild, 'founder').join(',')
+  );
 }
 
 function ticketAccessRoleIds(guild) {
   return cleanIdList(
-    roleGroupIds(guild, 'management').join(','),
     process.env.TICKET_ACCESS_ROLE_IDS,
     roleIdsByName(guild, process.env.TICKET_ACCESS_ROLE_NAMES).join(',')
   );
@@ -251,7 +261,7 @@ function memberHasAnyRole(member, roleIds) {
 }
 
 function isManagementMember(member, userId) {
-  return memberHasAnyRole(member, managementRoleIds(member?.guild));
+  return isManagementRank(leadershipRank(member, userId || member?.id));
 }
 
 function isFounderMember(member, userId) {
@@ -266,13 +276,13 @@ function isPrivilegedOverrideMember(member, userId) {
 
 function memberHasStaffChainAccess(member, userId) {
   if (!member) return false;
-  return ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
+  return ['trial_staff', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
     .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
 }
 
 function memberHasRoleGrantAccess(member, userId) {
   if (!member) return false;
-  return ['staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
+  return ['trial_staff', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder']
     .some((key) => key === 'founder' ? isFounderMember(member, userId) : memberHasAnyRole(member, roleGroupIds(member.guild, key)));
 }
 
@@ -283,7 +293,7 @@ function memberHasSeniorRoleGrantAccess(member, userId) {
 }
 
 function memberHasManagementRankAccess(member, userId) {
-  return isManagementMember(member, userId) || isManagementRank(leadershipRank(member, userId));
+  return isManagementRank(leadershipRank(member, userId));
 }
 
 function leadershipRank(member, userId) {
@@ -296,6 +306,7 @@ function leadershipRank(member, userId) {
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff_manager'))) return 'staff_manager';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'senior_staff'))) return 'senior_staff';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'staff'))) return 'staff';
+  if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'trial_staff'))) return 'trial_staff';
   if (memberHasAnyRole(member, roleGroupIds(member?.guild, 'whitelisted'))) return 'whitelisted';
   return 'player';
 }
@@ -306,6 +317,7 @@ function isManagementRank(rank) {
 
 function protectedMentionRoleMap(guild) {
   return [
+    ['trial_staff', roleGroupIds(guild, 'trial_staff')],
     ['staff', roleGroupIds(guild, 'staff')],
     ['senior_staff', roleGroupIds(guild, 'senior_staff')],
     ['staff_manager', roleGroupIds(guild, 'staff_manager')],
@@ -353,6 +365,7 @@ function canMentionProtected(authorKey, targetKey) {
     staff_manager: ['server_manager', 'developer', 'head_developer', 'co_owner', 'owner'],
     senior_staff: ['staff_manager', 'developer', 'server_manager'],
     staff: ['senior_staff', 'staff_manager'],
+    trial_staff: ['staff'],
     whitelisted: []
   };
 
@@ -363,15 +376,16 @@ function canMentionProtected(authorKey, targetKey) {
 
 function allowedEscalationTargetsForRank(actorRank, kind) {
   const supportTargets = {
-    staff: ['senior_staff', 'staff_manager', 'server_manager', 'developer'],
-    senior_staff: ['staff_manager', 'server_manager', 'developer'],
-    staff_manager: ['server_manager', 'developer', 'head_developer', 'co_owner', 'owner'],
-    server_manager: ['developer', 'head_developer', 'co_owner', 'owner'],
-    developer: ['head_developer', 'co_owner', 'owner'],
-    head_developer: ['co_owner', 'owner', 'founder'],
-    co_owner: ['owner', 'founder'],
+    trial_staff: ['owner'],
+    staff: ['owner'],
+    senior_staff: ['owner'],
+    staff_manager: ['owner'],
+    server_manager: ['owner'],
+    developer: ['owner'],
+    head_developer: ['owner'],
+    co_owner: ['owner'],
     owner: ['founder'],
-    founder: supportTicketLevels
+    founder: ['owner']
   };
   const bugTargets = {
     developer: ['head_developer', 'co_owner', 'owner'],
@@ -439,6 +453,110 @@ async function getDashboardInternal(path) {
     headers: { 'x-api-key': process.env.FIVEM_API_KEY },
     timeout: 5000
   }).catch(() => null);
+}
+
+function transcriptFileName(channel) {
+  return `${channelSafeName(channel?.name || 'ticket')}-${Date.now()}.txt`.slice(0, 120);
+}
+
+function formatTranscriptMessage(message) {
+  const author = message.author
+    ? `${message.author.tag || message.author.username || 'Unknown'} (${message.author.id})`
+    : 'Unknown';
+  const timestamp = new Date(message.createdTimestamp || Date.now()).toISOString();
+  const lines = [
+    `[${timestamp}] ${author}`,
+    message.content?.trim() || '(no text content)'
+  ];
+
+  if (message.attachments?.size) {
+    for (const attachment of message.attachments.values()) {
+      lines.push(`Attachment: ${attachment.name || 'file'} ${attachment.url}`);
+    }
+  }
+
+  if (message.embeds?.length) {
+    message.embeds.forEach((embed, index) => {
+      const title = embed.title ? ` title="${embed.title}"` : '';
+      const description = embed.description ? ` description="${String(embed.description).slice(0, 500)}"` : '';
+      lines.push(`Embed ${index + 1}:${title}${description}`);
+    });
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+async function fetchTranscriptMessages(channel, maxMessages = 1000) {
+  const messages = [];
+  let before;
+
+  while (messages.length < maxMessages) {
+    const batch = await channel.messages.fetch({
+      limit: Math.min(100, maxMessages - messages.length),
+      ...(before ? { before } : {})
+    }).catch(() => null);
+
+    if (!batch?.size) break;
+    messages.push(...batch.values());
+    before = batch.last()?.id;
+    if (batch.size < 100) break;
+  }
+
+  return messages.sort((a, b) => (a.createdTimestamp || 0) - (b.createdTimestamp || 0));
+}
+
+async function sendTicketTranscript(channel, closedBy = 'system', reason = 'Ticket closed') {
+  const transcriptChannel = await client.channels.fetch(cleanId(ticketTranscriptChannelId)).catch(() => null);
+  if (!transcriptChannel?.isTextBased?.()) return;
+
+  const meta = parseTicketMeta(channel);
+  const messages = await fetchTranscriptMessages(channel);
+  const header = [
+    `Unova Ticket Transcript`,
+    `Channel: #${channel.name} (${channel.id})`,
+    `Guild: ${channel.guild?.name || 'Unknown'} (${channel.guild?.id || 'unknown'})`,
+    `Closed By: ${closedBy}`,
+    `Close Reason: ${reason}`,
+    `Kind: ${meta?.kind || 'unknown'}`,
+    `Level: ${meta?.level || 'unknown'}`,
+    `Opener: ${meta?.opener || 'unknown'}`,
+    `Claimed: ${meta?.claimed || 'none'}`,
+    `Created: ${channel.createdAt ? channel.createdAt.toISOString() : 'unknown'}`,
+    `Messages Captured: ${messages.length}`,
+    '',
+    '========================================',
+    ''
+  ].join('\n');
+
+  let transcript = header + messages.map(formatTranscriptMessage).join('\n');
+  const maxBytes = 7_500_000;
+  let transcriptBuffer = Buffer.from(transcript, 'utf8');
+  if (transcriptBuffer.byteLength > maxBytes) {
+    const keep = transcriptBuffer.subarray(transcriptBuffer.byteLength - maxBytes + 500);
+    transcript = [
+      header,
+      '[Transcript truncated because it was too large. Newest messages are preserved.]',
+      '',
+      keep.toString('utf8')
+    ].join('\n');
+    transcriptBuffer = Buffer.from(transcript, 'utf8');
+  }
+
+  const attachment = new AttachmentBuilder(transcriptBuffer, {
+    name: transcriptFileName(channel)
+  });
+
+  await transcriptChannel.send({
+    content: [
+      `Ticket transcript saved for **#${channel.name}**.`,
+      `Closed by: ${closedBy}`,
+      `Messages captured: ${messages.length}`
+    ].join('\n'),
+    files: [attachment],
+    allowedMentions: { parse: [] }
+  }).catch(async (error) => {
+    await logToStaff(`[Ticket Transcript] Failed to post transcript for #${channel.name}: ${error.message}`);
+  });
 }
 
 async function getOnlinePlayerByCityId(playerId) {
@@ -526,6 +644,34 @@ function buildTicketOverwrites(guild, extraUserIds = []) {
   return uniqueOverwrites(overwrites);
 }
 
+function buildPrivatePullTicketOverwrites(guild, participantUserIds = [], writeRoleLevel = null) {
+  const botUserId = cleanId(configuredBotUserId) || client.user.id;
+  const botRoleId = cleanId(configuredBotRoleId);
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel]
+    }
+  ];
+
+  for (const userId of participantUserIds.map(cleanId).filter(Boolean)) {
+    overwrites.push({ id: userId, allow: ticketAllow });
+  }
+
+  for (const key of ['owner', 'founder']) {
+    for (const roleId of roleGroupIds(guild, key)) {
+      const canTalk = writeRoleLevel === key;
+      overwrites.push(canTalk
+        ? { id: roleId, allow: ticketAllow }
+        : { id: roleId, allow: ticketViewOnly, deny: ticketWriteDeny });
+    }
+  }
+
+  if (botRoleId) overwrites.push({ id: botRoleId, allow: ticketAllow });
+  if (botUserId) overwrites.push({ id: botUserId, allow: ticketAllow });
+  return uniqueOverwrites(overwrites);
+}
+
 function isTicketChannel(channel) {
   return Boolean(parseTicketMeta(channel));
 }
@@ -581,11 +727,11 @@ async function dmMetagamingWarning(member) {
 }
 
 function makeManagementMentionLine(guild) {
-  const roleIds = managementRoleIds(guild);
+  const roleIds = roleGroupIds(guild, 'trial_staff');
   if (roleIds.length) {
-    return `Management role: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
+    return `Trial staff: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
   }
-  return 'Management role: not configured';
+  return 'Trial staff role: not configured';
 }
 
 function ticketLevelRoleIds(guild, kind, level) {
@@ -607,6 +753,7 @@ function parseTicketMeta(channel) {
   if (topic.includes('unova-management-ticket')) {
     meta.kind = meta.kind || 'management';
     meta.locked = 'true';
+    meta.level = meta.level || 'private';
   }
   return meta;
 }
@@ -616,7 +763,9 @@ function serializeTicketMeta(meta) {
     const managementParts = [
       'unova-management-ticket',
       `source=${meta.source || 'discord'}`,
-      `target=${meta.target || 'none'}`
+      `target=${meta.target || 'none'}`,
+      `opener=${meta.opener || 'unknown'}`,
+      `level=${meta.level || 'private'}`
     ];
 
     for (const key of ['inactivePromptAt', 'inactiveCloseAt', 'inactiveReminderMessage', 'inactiveKeepOpen']) {
@@ -707,6 +856,7 @@ async function nextAvailableTicketLevel(guild, kind, currentLevel) {
 }
 
 async function initialTicketLevel(guild, kind, openerRank) {
+  if (kind === 'support') return nearestAvailableTicketLevel(guild, kind, supportTicketLevels, 0);
   if (kind === 'bug') return nearestAvailableTicketLevel(guild, kind, bugTicketLevels, 0);
   const openerIndex = supportTicketLevels.indexOf(openerRank);
   const preferredIndex = openerIndex >= 0 ? openerIndex + 1 : 0;
@@ -827,6 +977,16 @@ function memberCanAnswerInactivePrompt(member, userId, meta) {
     || memberHasManagementRankAccess(member, userId);
 }
 
+function memberCanAddToTicket(member, userId, meta) {
+  if (!member || !meta) return false;
+  if (isFounderMember(member, userId)) return true;
+  if (meta.opener === userId) return true;
+  if (meta.kind === 'management') {
+    return meta.opener === userId || meta.target === userId || isPrivilegedOverrideMember(member, userId);
+  }
+  return memberCanEscalateTicket(member, meta) || meta.claimed === userId;
+}
+
 async function deleteInactiveReminderMessage(channel, meta) {
   const reminderId = cleanId(meta.inactiveReminderMessage);
   if (!reminderId) return;
@@ -892,6 +1052,7 @@ async function updateInactiveReminder(channel, meta) {
 
   if (Date.now() >= closeAtMs) {
     await channel.send('Ticket closed automatically after no response to the inactivity check.').catch(() => null);
+    await sendTicketTranscript(channel, 'system', 'Inactive ticket closed after reminder countdown');
     await postDashboardInternal('/internal/tickets/close', { channelId: channel.id });
     await channel.delete('Ticket inactive after reminder countdown.').catch(() => null);
     return;
@@ -1416,7 +1577,7 @@ async function claimTicket(channel, guild, member, user) {
   if (meta.claimed && meta.claimed !== 'none') {
     return { ok: false, message: `This ticket is already claimed by <@${meta.claimed}>.` };
   }
-  if (user.id === meta.opener) {
+  if (user.id === meta.opener && !isManagementRank(leadershipRank(member, user.id))) {
     return { ok: false, message: 'You cannot claim your own ticket.' };
   }
 
@@ -1598,7 +1759,7 @@ async function handleTicketEscalationSelection(interaction) {
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const actorRank = leadershipRank(interaction.member, interaction.user.id);
-  const staffEscalation = meta.kind === 'support' && actorRank === 'staff';
+  const staffEscalation = meta.kind === 'support' && ['trial_staff', 'staff'].includes(actorRank);
   await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, meta.kind, {
     releaseClaim: staffEscalation,
     attentionEmbed: staffEscalation ? higherManagementAttentionEmbed(nextLevel, interaction.user) : null
@@ -1701,14 +1862,23 @@ async function createManagementTicket(guild, options) {
   const targetUser = options.targetUser || null;
   const reason = options.reason || 'No reason provided';
   const label = options.label || 'ticket';
-  const extraUserIds = targetUser ? [targetUser.id] : [];
+  const openerId = cleanId(options.openerId);
+  const extraUserIds = [openerId, targetUser?.id].filter(Boolean);
   const targetMember = targetUser ? await guild.members.fetch(targetUser.id).catch(() => null) : null;
   const targetName = targetMember?.displayName || targetUser?.globalName || targetUser?.username || targetUser?.id;
   const channelOptions = {
     name: makeTicketName(label, targetName),
     type: ChannelType.GuildText,
-    topic: `unova-management-ticket | source=${options.source || 'discord'} | target=${targetUser ? targetUser.id : 'none'}`,
-    permissionOverwrites: buildTicketOverwrites(guild, extraUserIds)
+    topic: serializeTicketMeta({
+      kind: 'management',
+      source: options.source || 'discord',
+      target: targetUser ? targetUser.id : 'none',
+      opener: openerId || 'unknown',
+      level: 'private'
+    }),
+    permissionOverwrites: options.privatePull
+      ? buildPrivatePullTicketOverwrites(guild, extraUserIds)
+      : buildTicketOverwrites(guild, extraUserIds)
   };
 
   const categoryId = await resolveTicketCategory(guild).catch((error) => {
@@ -1724,7 +1894,9 @@ async function createManagementTicket(guild, options) {
 
   await channel.send([
     '**Management ticket opened**',
-    makeManagementMentionLine(guild),
+    options.privatePull
+      ? 'Private pull ticket: only the puller, the pulled player, and view-only leadership can see this.'
+      : makeManagementMentionLine(guild),
     targetLine,
     `Reason: ${reason}`,
     '',
@@ -1827,6 +1999,25 @@ async function logToStaff(message) {
   if (!channelId) return;
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (channel) channel.send(String(message).slice(0, 1900)).catch(() => {});
+}
+
+async function assignNonWhitelistedRole(member) {
+  const roleId = cleanId(nonWhitelistedRoleId);
+  if (!roleId || member.user?.bot) return;
+
+  if (member.roles.cache.has(roleId)) return;
+
+  const role = await member.guild.roles.fetch(roleId).catch(() => null);
+  if (!role) {
+    await logToStaff(`[Auto Role] Non-whitelisted role ${roleId} was not found for ${member.user.tag}.`);
+    return;
+  }
+
+  await member.roles.add(roleId, 'New member auto-role: non-whitelisted').then(async () => {
+    await logToStaff(`[Auto Role] Added ${role.name} to ${member.user.tag} (${member.id}).`);
+  }).catch(async (error) => {
+    await logToStaff(`[Auto Role] Failed to add non-whitelisted role to ${member.user.tag} (${member.id}): ${error.message}`);
+  });
 }
 
 function compactLogText(value, limit = 800) {
@@ -2028,6 +2219,8 @@ client.once(Events.ClientReady, async (readyClient) => {
 
 client.on(Events.GuildMemberAdd, async (member) => {
   if (cleanId(guildId) && member.guild.id !== cleanId(guildId)) return;
+  await assignNonWhitelistedRole(member);
+
   const channel = await member.guild.channels.fetch(cleanId(welcomeChannelId)).catch(() => null);
   if (!channel) return;
 
@@ -2141,6 +2334,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({ content: 'Closing this inactive ticket.', flags: MessageFlags.Ephemeral });
+      await sendTicketTranscript(interaction.channel, interaction.user.tag || interaction.user.id, 'Inactive ticket closed from reminder panel');
       await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
       await interaction.channel.delete(`Inactive ticket closed by ${interaction.user.tag}.`).catch(() => null);
       return;
@@ -2213,6 +2407,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({ content: 'You cannot close this ticket.', flags: MessageFlags.Ephemeral });
       }
       await interaction.reply({ content: 'Closing this ticket.', flags: MessageFlags.Ephemeral });
+      await sendTicketTranscript(interaction.channel, interaction.user.tag || interaction.user.id, 'Ticket closed from ticket controls');
       await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
       await interaction.channel.delete('Ticket closed.');
       return;
@@ -2358,7 +2553,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       label: 'pull',
       source: 'staff-panel',
       openerId: interaction.user.id,
-      openerName: interaction.user.tag
+      openerName: interaction.user.tag,
+      privatePull: true
     });
     return interaction.editReply(`Player pulled into ticket: ${channel}`);
   }
@@ -2455,6 +2651,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({ content: 'Closing this management ticket.', flags: MessageFlags.Ephemeral });
+      await sendTicketTranscript(interaction.channel, interaction.user.tag || interaction.user.id, 'Management ticket closed by slash command');
       await postDashboardInternal('/internal/tickets/close', { channelId: interaction.channel.id });
       await interaction.channel.delete('Management ticket closed.');
       return;
@@ -2585,7 +2782,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (subcommand === 'settings') {
       const lines = [
         '**Ticket Settings**',
-        `Management: ${managementRoleIds(interaction.guild).map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
+        `Trial Staff: ${roleGroupIds(interaction.guild, 'trial_staff').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
         `Staff: ${roleGroupIds(interaction.guild, 'staff').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
         `Senior Staff: ${roleGroupIds(interaction.guild, 'senior_staff').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
         `Staff Manager: ${roleGroupIds(interaction.guild, 'staff_manager').map((id) => `<@&${id}>`).join(', ') || 'not set'}`,
@@ -2629,8 +2826,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   if (interaction.commandName === 'add') {
-    if (!isTicketChannel(interaction.channel)) {
+    const meta = parseTicketMeta(interaction.channel);
+    if (!meta) {
       await interaction.reply({ content: "Use /add inside a Unova ticket channel.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+
+    if (!memberCanAddToTicket(interaction.member, interaction.user.id, meta)) {
+      await interaction.reply({ content: 'You can only add users to tickets you created or tickets you are handling.', flags: MessageFlags.Ephemeral });
       return;
     }
 
