@@ -35,10 +35,12 @@ const feedView = document.getElementById('feedView');
 const ticketsView = document.getElementById('ticketsView');
 const loaView = document.getElementById('loaView');
 const priorityView = document.getElementById('priorityView');
+const autorolesView = document.getElementById('autorolesView');
 const bansView = document.getElementById('bansView');
 const settingsView = document.getElementById('settingsView');
 const announcementsNavButton = document.getElementById('announcementsNavButton');
 const feedNavButton = document.getElementById('feedNavButton');
+const autorolesNavButton = document.getElementById('autorolesNavButton');
 const bansNavButton = document.getElementById('bansNavButton');
 const settingsNavButton = document.getElementById('settingsNavButton');
 const founderSettingsPanel = document.getElementById('founderSettingsPanel');
@@ -49,6 +51,10 @@ const priorityRoleForm = document.getElementById('priorityRoleForm');
 const priorityOverrideForm = document.getElementById('priorityOverrideForm');
 const priorityRulesList = document.getElementById('priorityRulesList');
 const priorityOverridesList = document.getElementById('priorityOverridesList');
+const autoroleForm = document.getElementById('autoroleForm');
+const autoroleNotice = document.getElementById('autoroleNotice');
+const autoroleSubmitButton = document.getElementById('autoroleSubmitButton');
+const autoroleJobsList = document.getElementById('autoroleJobsList');
 const ticketsNavButton = document.getElementById('ticketsNavButton');
 const ticketsList = document.getElementById('ticketsList');
 const founderLoaForm = document.getElementById('founderLoaForm');
@@ -131,13 +137,14 @@ function formatRole(value) {
 
 function roleRank(value) {
   return {
-    staff: 1,
-    senior_staff: 2,
-    staff_manager: 3,
-    server_manager: 4,
-    co_owner: 5,
-    owner: 6,
-    founder: 7
+    trial_staff: 1,
+    staff: 2,
+    senior_staff: 3,
+    staff_manager: 4,
+    server_manager: 5,
+    co_owner: 6,
+    owner: 7,
+    founder: 8
   }[value] || 0;
 }
 
@@ -162,6 +169,10 @@ function canManageBans() {
 }
 
 function canClearBanHistory() {
+  return dashboardUser?.role === 'founder';
+}
+
+function canManageAutoRoles() {
   return dashboardUser?.role === 'founder';
 }
 
@@ -247,6 +258,7 @@ function renderStatus(data) {
     clearBanHistoryButton?.classList.toggle('hidden', !canClearBanHistory());
     announcementsNavButton.classList.toggle('hidden', !canPostAnnouncements());
     feedNavButton.classList.toggle('hidden', !canManageFeed());
+    autorolesNavButton?.classList.toggle('hidden', !canManageAutoRoles());
     if (displayNameInput && !displayNameInput.value) displayNameInput.value = dashboardUser.name || '';
     if (discordLinkId && !discordLinkId.value) discordLinkId.value = dashboardUser.discordId || '';
     if (dashboardUser.role === 'founder') loadFirebaseUsers();
@@ -330,6 +342,85 @@ async function loadPriority() {
   const response = await api('/dashboard/priority').catch(() => null);
   if (!response || !response.ok) return;
   renderPriority(await response.json());
+}
+
+function extractDiscordIds(value) {
+  return [...new Set(String(value || '').match(/\d{15,25}/g) || [])];
+}
+
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function renderAutoRoleJobs(jobs = []) {
+  if (!autoroleJobsList) return;
+  autoroleJobsList.innerHTML = '';
+
+  if (!jobs.length) {
+    autoroleJobsList.innerHTML = '<div class="action-item muted"><span></span><span>No scheduled auto roles yet.</span><span></span></div>';
+    return;
+  }
+
+  for (const job of jobs) {
+    const okCount = (job.results || []).filter((item) => item.ok).length;
+    const failCount = (job.results || []).filter((item) => !item.ok).length;
+    const item = document.createElement('div');
+    item.className = 'action-item autorole-item';
+    item.innerHTML = [
+      `<span class="badge ${escapeHtml(job.status || 'scheduled')}">${escapeHtml(job.status || 'scheduled')}</span>`,
+      `<span><b>${escapeHtml(job.label || 'Scheduled role grant')}</b><small>Role ${escapeHtml(job.roleId)} · ${job.memberIds?.length || 0} member${job.memberIds?.length === 1 ? '' : 's'}</small></span>`,
+      `<span>${escapeHtml(formatDateTime(job.runAt))}</span>`,
+      `<span>${job.completedAt ? `${okCount} ok / ${failCount} failed` : `Created ${escapeHtml(formatDateTime(job.createdAt))}`}</span>`
+    ].join('');
+
+    if (job.error) {
+      const error = document.createElement('small');
+      error.className = 'muted autorole-error';
+      error.textContent = job.error;
+      item.appendChild(error);
+    }
+
+    if (canManageAutoRoles() && ['scheduled', 'processing'].includes(job.status)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Cancel';
+      button.addEventListener('click', () => deleteAutoRoleJob(job.id));
+      item.appendChild(button);
+    }
+
+    autoroleJobsList.appendChild(item);
+  }
+}
+
+async function loadAutoRoles() {
+  if (!canManageAutoRoles()) return;
+  const response = await api('/dashboard/autoroles').catch(() => null);
+  if (!response || !response.ok) {
+    autoroleJobsList.innerHTML = '<div class="action-item muted"><span></span><span>Could not load scheduled auto roles.</span><span></span></div>';
+    return;
+  }
+  const data = await response.json();
+  renderAutoRoleJobs(data.jobs || []);
+}
+
+async function deleteAutoRoleJob(id) {
+  if (!canManageAutoRoles()) return;
+  autoroleNotice.textContent = 'Cancelling scheduled auto role...';
+  const response = await api('/dashboard/autoroles/delete', {
+    method: 'POST',
+    body: JSON.stringify({ id })
+  }).catch(() => null);
+  if (!response || !response.ok) {
+    const error = response ? await response.json().catch(() => ({})) : {};
+    autoroleNotice.textContent = error.error || 'Could not cancel auto role.';
+    return;
+  }
+  autoroleNotice.textContent = 'Scheduled auto role cancelled.';
+  const data = await response.json();
+  renderAutoRoleJobs(data.jobs || []);
 }
 
 function renderPlayers() {
@@ -692,7 +783,7 @@ async function startWebsiteSpectate(player) {
 }
 
 function roleOptions(selectedRole) {
-  const roles = ['', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder'];
+  const roles = ['', 'trial_staff', 'staff', 'senior_staff', 'staff_manager', 'server_manager', 'co_owner', 'owner', 'founder'];
   return roles.map((role) => {
     const label = role ? formatRole(role) : 'No Dashboard Access';
     return `<option value="${role}"${role === selectedRole ? ' selected' : ''}>${label}</option>`;
@@ -898,9 +989,11 @@ document.querySelectorAll('.nav button').forEach((button) => {
     ticketsView.classList.toggle('hidden', view !== 'tickets');
     loaView.classList.toggle('hidden', view !== 'loa');
     priorityView.classList.toggle('hidden', view !== 'priority');
+    autorolesView?.classList.toggle('hidden', view !== 'autoroles');
     bansView.classList.toggle('hidden', view !== 'bans');
     settingsView.classList.toggle('hidden', view !== 'settings');
     if (view === 'priority') loadPriority();
+    if (view === 'autoroles') loadAutoRoles();
     if (view === 'feed') loadFeed();
     if (view === 'bans') loadBans();
     if (view === 'loa') loadLoaManagementMembers();
@@ -1141,6 +1234,42 @@ feedProfileForm?.addEventListener('submit', async (event) => {
     feedProfileNotice.textContent = error.message || 'Could not save the feed profile.';
   } finally {
     feedProfileSubmitButton.disabled = false;
+  }
+});
+
+autoroleForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!canManageAutoRoles()) return;
+
+  autoroleNotice.textContent = 'Scheduling auto role...';
+  autoroleSubmitButton.disabled = true;
+
+  try {
+    const data = Object.fromEntries(new FormData(autoroleForm));
+    const memberIds = extractDiscordIds(data.memberIds);
+    const runAtDate = new Date(`${data.date}T${data.time}`);
+    if (!memberIds.length) throw new Error('Add at least one valid Discord member ID.');
+    if (Number.isNaN(runAtDate.getTime())) throw new Error('Choose a valid date and time.');
+
+    const response = await api('/dashboard/autoroles', {
+      method: 'POST',
+      body: JSON.stringify({
+        roleId: data.roleId,
+        memberIds,
+        runAt: runAtDate.toISOString(),
+        label: data.label
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not schedule auto role.');
+
+    autoroleForm.reset();
+    autoroleNotice.textContent = `Auto role scheduled for ${formatDateTime(result.job?.runAt)}.`;
+    renderAutoRoleJobs(result.jobs || []);
+  } catch (error) {
+    autoroleNotice.textContent = error.message || 'Could not schedule auto role.';
+  } finally {
+    autoroleSubmitButton.disabled = false;
   }
 });
 

@@ -90,6 +90,7 @@ const state = {
   openTickets: [],
   loas: [],
   gameBans: [],
+  autoRoleJobs: [],
   unovaFeed: [],
   unovaFeedName: 'UNC Customs',
   unovaFeedAvatarObject: null,
@@ -177,6 +178,7 @@ function persistentStatePayload() {
     openTickets: state.openTickets,
     loas: state.loas,
     gameBans: state.gameBans,
+    autoRoleJobs: state.autoRoleJobs,
     unovaFeed: state.unovaFeed,
     unovaFeedName: state.unovaFeedName,
     unovaFeedAvatarObject: state.unovaFeedAvatarObject,
@@ -216,6 +218,7 @@ async function ensureStateLoaded() {
         state.openTickets = Array.isArray(stored.openTickets) ? stored.openTickets.map(normalizeOpenTicket).filter(Boolean) : [];
         state.loas = Array.isArray(stored.loas) ? stored.loas.map(normalizeLoa).filter(Boolean) : [];
         state.gameBans = Array.isArray(stored.gameBans) ? stored.gameBans.map(normalizeGameBan).filter(Boolean) : [];
+        state.autoRoleJobs = Array.isArray(stored.autoRoleJobs) ? stored.autoRoleJobs.map(normalizeAutoRoleJob).filter(Boolean) : [];
         state.unovaFeed = Array.isArray(stored.unovaFeed) ? stored.unovaFeed.map(normalizeFeedPost).filter(Boolean) : [];
         state.unovaFeedName = String(stored.unovaFeedName || 'UNC Customs').trim().slice(0, 80) || 'UNC Customs';
         state.unovaFeedAvatarObject = String(stored.unovaFeedAvatarObject || '').trim().slice(0, 500) || null;
@@ -614,6 +617,22 @@ function splitConfig(value) {
 
 function cleanIdList(...values) {
   return [...new Set(values.flatMap((value) => splitConfig(value).map(cleanId).filter(Boolean)))];
+}
+
+function extractDiscordIds(...values) {
+  const ids = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+
+    const matches = String(value || '').match(/\d{15,25}/g) || [];
+    ids.push(...matches.map(cleanId).filter(Boolean));
+  };
+
+  values.forEach(walk);
+  return [...new Set(ids)];
 }
 
 function normalizeName(value) {
@@ -1797,6 +1816,124 @@ async function getPendingLoas() {
   return pendingLoasFrom(await getLoas());
 }
 
+function normalizeAutoRoleResult(value) {
+  if (!value || typeof value !== 'object') return null;
+  const userId = cleanId(value.userId || value.discordId || value.id);
+  if (!userId) return null;
+  return {
+    userId,
+    ok: value.ok === true,
+    message: String(value.message || '').trim().slice(0, 300),
+    completedAt: value.completedAt || new Date().toISOString()
+  };
+}
+
+function normalizeAutoRoleJob(value) {
+  if (!value || typeof value !== 'object') return null;
+  const roleId = cleanId(value.roleId);
+  const memberIds = extractDiscordIds(value.memberIds, value.discordIds, value.userIds).slice(0, 100);
+  const runAtDate = new Date(value.runAt || value.scheduledAt || value.run_at || '');
+  if (!roleId || !memberIds.length || Number.isNaN(runAtDate.getTime())) return null;
+
+  const status = ['scheduled', 'processing', 'completed', 'failed', 'cancelled'].includes(value.status)
+    ? value.status
+    : 'scheduled';
+  return {
+    id: String(value.id || crypto.randomUUID()).trim().slice(0, 80),
+    label: String(value.label || '').trim().slice(0, 120),
+    roleId,
+    memberIds,
+    runAt: runAtDate.toISOString(),
+    status,
+    createdAt: value.createdAt || new Date().toISOString(),
+    createdBy: String(value.createdBy || '').trim().slice(0, 160),
+    createdByName: String(value.createdByName || '').trim().slice(0, 160),
+    startedAt: value.startedAt || null,
+    completedAt: value.completedAt || null,
+    results: Array.isArray(value.results) ? value.results.map(normalizeAutoRoleResult).filter(Boolean).slice(0, 200) : [],
+    error: value.error ? String(value.error).trim().slice(0, 500) : null
+  };
+}
+
+function publicAutoRoleJob(job) {
+  return {
+    id: job.id,
+    label: job.label,
+    roleId: job.roleId,
+    memberIds: job.memberIds,
+    runAt: job.runAt,
+    status: job.status,
+    createdAt: job.createdAt,
+    createdByName: job.createdByName,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    results: job.results || [],
+    error: job.error || null
+  };
+}
+
+async function getAutoRoleJobs() {
+  await ensureStateLoaded();
+  state.autoRoleJobs = state.autoRoleJobs.map(normalizeAutoRoleJob).filter(Boolean);
+  return state.autoRoleJobs;
+}
+
+async function claimDueAutoRoleJobs(limit = 5) {
+  await ensureStateLoaded();
+  const now = Date.now();
+  const nowIso = new Date().toISOString();
+  const staleBefore = now - (10 * 60 * 1000);
+  const due = [];
+
+  state.autoRoleJobs = state.autoRoleJobs.map((job) => {
+    let next = normalizeAutoRoleJob(job);
+    if (!next) return null;
+
+    const startedAtMs = next.startedAt ? Date.parse(next.startedAt) : 0;
+    if (next.status === 'processing' && (!startedAtMs || startedAtMs < staleBefore)) {
+      next = { ...next, status: 'scheduled', startedAt: null, error: null };
+    }
+
+    if (next.status === 'scheduled' && Date.parse(next.runAt) <= now && due.length < limit) {
+      next = { ...next, status: 'processing', startedAt: nowIso, error: null };
+      due.push(next);
+    }
+
+    return next;
+  }).filter(Boolean);
+
+  if (due.length) await savePersistentState();
+  return due;
+}
+
+async function completeAutoRoleJob(body) {
+  await ensureStateLoaded();
+  const id = String(body.id || '').trim();
+  const results = Array.isArray(body.results) ? body.results.map(normalizeAutoRoleResult).filter(Boolean).slice(0, 200) : [];
+  const requestedStatus = String(body.status || '').trim();
+  const successCount = results.filter((item) => item.ok).length;
+  const status = requestedStatus === 'failed' || (!successCount && results.length)
+    ? 'failed'
+    : 'completed';
+  let completed = null;
+
+  state.autoRoleJobs = state.autoRoleJobs.map((job) => {
+    if (job.id !== id) return job;
+    completed = {
+      ...job,
+      status,
+      completedAt: new Date().toISOString(),
+      results,
+      error: body.error ? String(body.error).trim().slice(0, 500) : null
+    };
+    return completed;
+  });
+
+  if (!completed) return null;
+  await savePersistentState();
+  return completed;
+}
+
 function normalizeDateTime(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -2476,6 +2613,20 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && pathname === '/internal/autoroles/due') {
+    if (!requireInternal(req, res)) return;
+    const jobs = await claimDueAutoRoleJobs();
+    sendJson(res, 200, { jobs });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/internal/autoroles/complete') {
+    if (!requireInternal(req, res)) return;
+    const job = await completeAutoRoleJob(await readBody(req));
+    sendJson(res, job ? 200 : 404, job ? { ok: true, job } : { error: 'Autorole job not found.' });
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/internal/city/notify') {
     if (!requireInternal(req, res)) return;
     const body = await readBody(req);
@@ -2672,6 +2823,88 @@ async function handleRequest(req, res) {
       pendingLoas: hasDashboardRoleAtLeast(user, 'founder') ? await getPendingLoas() : [],
       loas: await getActiveLoas()
     });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/dashboard/autoroles') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const jobs = (await getAutoRoleJobs())
+      .map(publicAutoRoleJob)
+      .sort((a, b) => Date.parse(b.createdAt || b.runAt) - Date.parse(a.createdAt || a.runAt));
+    sendJson(res, 200, { jobs });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/autoroles') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const job = normalizeAutoRoleJob({
+      id: crypto.randomUUID(),
+      label: body.label,
+      roleId: body.roleId,
+      memberIds: body.memberIds,
+      runAt: body.runAt,
+      status: 'scheduled',
+      createdAt: new Date().toISOString(),
+      createdBy: user.uid,
+      createdByName: user.name || user.email || 'Founder'
+    });
+
+    if (!job) {
+      sendJson(res, 400, { error: 'Valid role ID, member IDs, date, and time are required.' });
+      return;
+    }
+
+    state.autoRoleJobs = (await getAutoRoleJobs()).filter((item) => item.id !== job.id);
+    state.autoRoleJobs.unshift(job);
+    await savePersistentState();
+    await logDiscordAction([
+      '**Scheduled Auto Role Created**',
+      `Founder: ${user.name || user.uid}`,
+      `Role: <@&${job.roleId}> (${job.roleId})`,
+      `Members: ${job.memberIds.length}`,
+      `Runs At: ${job.runAt}`,
+      job.label ? `Label: ${job.label}` : null
+    ]);
+    sendJson(res, 200, { ok: true, job: publicAutoRoleJob(job), jobs: (await getAutoRoleJobs()).map(publicAutoRoleJob) });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/dashboard/autoroles/delete') {
+    const user = await requireDashboardUser(req, res);
+    if (!user || !requireDashboardRole(user, res, 'founder')) return;
+
+    const body = await readBody(req);
+    const id = String(body.id || '').trim();
+    let cancelled = null;
+    state.autoRoleJobs = (await getAutoRoleJobs()).map((job) => {
+      if (job.id !== id) return job;
+      cancelled = {
+        ...job,
+        status: job.status === 'completed' || job.status === 'failed' ? job.status : 'cancelled',
+        completedAt: job.completedAt || new Date().toISOString()
+      };
+      return cancelled;
+    });
+
+    if (!cancelled) {
+      sendJson(res, 404, { error: 'Auto role job not found.' });
+      return;
+    }
+
+    await savePersistentState();
+    await logDiscordAction([
+      '**Scheduled Auto Role Cancelled**',
+      `Founder: ${user.name || user.uid}`,
+      `Role: <@&${cancelled.roleId}> (${cancelled.roleId})`,
+      `Members: ${cancelled.memberIds.length}`,
+      `Runs At: ${cancelled.runAt}`
+    ]);
+    sendJson(res, 200, { ok: true, job: publicAutoRoleJob(cancelled), jobs: (await getAutoRoleJobs()).map(publicAutoRoleJob) });
     return;
   }
 

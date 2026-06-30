@@ -48,6 +48,10 @@
             <span class="nav-icon">Q</span>
             <span>Priority</span>
           </button>
+          <button id="autorolesNavButton" class="hidden" type="button" data-view="autoroles">
+            <span class="nav-icon">R</span>
+            <span>Auto Roles</span>
+          </button>
           <button id="bansNavButton" type="button" data-view="bans">
             <span class="nav-icon">B</span>
             <span>Ban List</span>
@@ -360,6 +364,35 @@
                 <div id="priorityOverridesList" class="config-list"></div>
               </div>
             </div>
+          </section>
+
+          <section id="autorolesView" class="actions-view hidden">
+            <div class="section-heading">
+              <h3>Auto Roles</h3>
+              <span>Founder scheduled role grants</span>
+            </div>
+            <form id="autoroleForm" class="config-panel autorole-panel">
+              <h4>Schedule Role Grant</h4>
+              <label for="autoroleRoleId">Discord Role ID</label>
+              <input id="autoroleRoleId" name="roleId" type="text" inputmode="numeric" placeholder="Role ID" required>
+              <label for="autoroleMemberIds">Member Discord IDs</label>
+              <textarea id="autoroleMemberIds" name="memberIds" rows="7" placeholder="One Discord ID or mention per line" required></textarea>
+              <div class="form-grid">
+                <div>
+                  <label for="autoroleDate">Date</label>
+                  <input id="autoroleDate" name="date" type="date" required>
+                </div>
+                <div>
+                  <label for="autoroleTime">Time</label>
+                  <input id="autoroleTime" name="time" type="time" required>
+                </div>
+              </div>
+              <label for="autoroleLabel">Label</label>
+              <input id="autoroleLabel" name="label" type="text" maxlength="120" placeholder="Optional">
+              <button id="autoroleSubmitButton" type="submit">Schedule Auto Role</button>
+              <p id="autoroleNotice" class="form-notice"></p>
+            </form>
+            <div id="autoroleJobsList" class="actions-list"></div>
           </section>
 
           <section id="bansView" class="actions-view hidden">

@@ -828,6 +828,23 @@ button {
   color: #d2dbe8;
 }
 
+.badge.scheduled,
+.badge.processing {
+  background: rgba(65, 135, 255, 0.22);
+  color: #b9d3ff;
+}
+
+.badge.completed {
+  background: rgba(84, 216, 145, 0.22);
+  color: #9bf4c7;
+}
+
+.badge.failed,
+.badge.cancelled {
+  background: rgba(237, 77, 109, 0.22);
+  color: #ffa0b2;
+}
+
 .badge.loa {
   background: rgba(54, 227, 239, 0.18);
   color: #94f7ff;
@@ -845,6 +862,15 @@ button {
 .loa-create-panel {
   max-width: 740px;
   margin-bottom: 14px;
+}
+
+.autorole-item {
+  grid-template-columns: 100px minmax(0, 1fr) minmax(150px, 180px) minmax(130px, 170px) auto;
+}
+
+.autorole-error {
+  grid-column: 2 / -1;
+  color: #ffa0b2;
 }
 
 .action-item span:last-child small {
@@ -1536,6 +1562,7 @@ button {
 .announcement-panel,
 .ban-panel,
 .loa-create-panel,
+.autorole-panel,
 #passwordForm,
 #discordLinkForm,
 #founderSettingsPanel,
@@ -1547,6 +1574,7 @@ button {
 #settingsView,
 #bansView,
 #priorityView,
+#autorolesView,
 #loaView {
   display: grid;
   grid-template-columns: minmax(0, 0.82fr) minmax(320px, 0.48fr);
@@ -1558,6 +1586,7 @@ button {
 #settingsView.hidden,
 #bansView.hidden,
 #priorityView.hidden,
+#autorolesView.hidden,
 #loaView.hidden {
   display: none !important;
 }
@@ -1566,6 +1595,7 @@ button {
 #settingsView .section-heading,
 #bansView .section-heading,
 #priorityView .section-heading,
+#autorolesView .section-heading,
 #loaView .section-heading {
   grid-column: 1 / -1;
 }
@@ -1573,6 +1603,7 @@ button {
 #announcementsView .announcement-panel,
 #bansView .ban-panel,
 #priorityView .priority-grid:first-of-type,
+#autorolesView .autorole-panel,
 #settingsView #passwordForm,
 #loaView #founderLoaForm,
 #loaView #loaRequestForm {
@@ -1582,6 +1613,7 @@ button {
 #announcementsView #announcementNotice,
 #bansView #bansList,
 #priorityView .priority-grid:last-of-type,
+#autorolesView #autoroleJobsList,
 #settingsView #founderSettingsPanel,
 #settingsView #founderCleanupPanel,
 #loaView #pendingLoaList,
@@ -1597,6 +1629,7 @@ button {
   #settingsView,
   #bansView,
   #priorityView,
+  #autorolesView,
   #loaView {
     grid-template-columns: 1fr;
   }
@@ -1613,12 +1646,14 @@ button {
   #announcementsView .announcement-panel,
   #bansView .ban-panel,
   #priorityView .priority-grid:first-of-type,
+  #autorolesView .autorole-panel,
   #settingsView #passwordForm,
   #loaView #founderLoaForm,
   #loaView #loaRequestForm,
   #announcementsView #announcementNotice,
   #bansView #bansList,
   #priorityView .priority-grid:last-of-type,
+  #autorolesView #autoroleJobsList,
   #settingsView #founderSettingsPanel,
   #settingsView #founderCleanupPanel,
   #loaView #pendingLoaList,

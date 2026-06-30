@@ -455,6 +455,83 @@ async function getDashboardInternal(path) {
   }).catch(() => null);
 }
 
+async function completeScheduledAutoRole(job, status, results, error = null) {
+  if (!job?.id) return null;
+  return postDashboardInternal('/internal/autoroles/complete', {
+    id: job.id,
+    status,
+    results,
+    error
+  });
+}
+
+async function processScheduledAutoRole(guild, job) {
+  const roleId = cleanId(job?.roleId);
+  const memberIds = [...new Set((job?.memberIds || []).map(cleanId).filter(Boolean))];
+  const results = [];
+
+  if (!roleId || !memberIds.length) {
+    await completeScheduledAutoRole(job, 'failed', [], 'Missing role ID or member IDs.');
+    return;
+  }
+
+  const role = await guild.roles.fetch(roleId).catch(() => null);
+  if (!role) {
+    await completeScheduledAutoRole(job, 'failed', memberIds.map((userId) => ({
+      userId,
+      ok: false,
+      message: `Role ${roleId} was not found.`
+    })), `Role ${roleId} was not found.`);
+    await logToStaff(`[Auto Role] Scheduled job ${job.id} failed because role ${roleId} was not found.`);
+    return;
+  }
+
+  for (const userId of memberIds) {
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) {
+      results.push({ userId, ok: false, message: 'Member not found in Discord.' });
+      continue;
+    }
+
+    if (member.roles.cache.has(role.id)) {
+      results.push({ userId, ok: true, message: `Already had ${role.name}.` });
+      continue;
+    }
+
+    try {
+      await member.roles.add(role, `Scheduled Unova autorole${job.label ? `: ${job.label}` : ''}`);
+      results.push({ userId, ok: true, message: `Added ${role.name}.` });
+    } catch (error) {
+      results.push({ userId, ok: false, message: error.message || 'Discord role add failed.' });
+    }
+  }
+
+  const addedCount = results.filter((item) => item.ok).length;
+  const failedCount = results.length - addedCount;
+  await completeScheduledAutoRole(job, addedCount ? 'completed' : 'failed', results, addedCount ? null : 'No members received the role.');
+  await logToStaff([
+    '**Scheduled Auto Role Processed**',
+    job.label ? `Label: ${job.label}` : null,
+    `Role: <@&${role.id}> (${role.id})`,
+    `Added/Already Had: ${addedCount}`,
+    `Failed: ${failedCount}`,
+    failedCount ? `Failures: ${results.filter((item) => !item.ok).slice(0, 8).map((item) => `<@${item.userId}> ${item.message}`).join(' | ')}` : null
+  ].filter(Boolean).join('\n'));
+}
+
+async function pollScheduledAutoRoles(guild) {
+  const response = await getDashboardInternal('/internal/autoroles/due');
+  const jobs = response?.data?.jobs || [];
+  for (const job of jobs) {
+    try {
+      await processScheduledAutoRole(guild, job);
+    } catch (error) {
+      await completeScheduledAutoRole(job, 'failed', [], error.message).catch(() => null);
+      await logToStaff(`[Auto Role] Scheduled job ${job?.id || 'unknown'} failed: ${error.message}`);
+    }
+  }
+}
+
 function transcriptFileName(channel) {
   return `${channelSafeName(channel?.name || 'ticket')}-${Date.now()}.txt`.slice(0, 120);
 }
@@ -2204,6 +2281,9 @@ client.once(Events.ClientReady, async (readyClient) => {
     await updateLoaStatusEmbed(guild).catch((error) => {
       console.warn(`[Unova Bot] LOA status update failed: ${error.message}`);
     });
+    await pollScheduledAutoRoles(guild).catch((error) => {
+      console.warn(`[Unova Bot] Scheduled autorole check failed: ${error.message}`);
+    });
     setInterval(() => {
       checkInactiveTickets(guild).catch((error) => {
         console.warn(`[Unova Bot] Inactive ticket check failed: ${error.message}`);
@@ -2214,6 +2294,11 @@ client.once(Events.ClientReady, async (readyClient) => {
         console.warn(`[Unova Bot] LOA status update failed: ${error.message}`);
       });
     }, 30 * 60 * 1000);
+    setInterval(() => {
+      pollScheduledAutoRoles(guild).catch((error) => {
+        console.warn(`[Unova Bot] Scheduled autorole check failed: ${error.message}`);
+      });
+    }, 30 * 1000);
   }
 });
 
