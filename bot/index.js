@@ -59,6 +59,7 @@ const inactiveReminderAfterMs = 48 * 60 * 60 * 1000;
 const inactiveReminderCloseAfterMs = 6 * 60 * 60 * 1000;
 const inactiveReminderNoResponseAfterMs = 2 * 60 * 60 * 1000;
 const founderRoleId = '1480636794151108638';
+const managementMentionBypassRoleId = process.env.MANAGEMENT_MENTION_BYPASS_ROLE_ID || '1522802335691046942';
 
 if (!guildId || guildId === 'your_discord_server_id') {
   console.warn('DISCORD_GUILD_ID is not configured. Slash commands will not be registered.');
@@ -260,6 +261,13 @@ function memberHasAnyRole(member, roleIds) {
   return false;
 }
 
+function canBypassProtectedMentions(member) {
+  return memberHasAnyRole(member, cleanIdList(
+    process.env.MANAGEMENT_MENTION_BYPASS_ROLE_IDS,
+    managementMentionBypassRoleId
+  ));
+}
+
 function isManagementMember(member, userId) {
   return isManagementRank(leadershipRank(member, userId || member?.id));
 }
@@ -376,7 +384,7 @@ function canMentionProtected(authorKey, targetKey) {
 
 function allowedEscalationTargetsForRank(actorRank, kind) {
   const supportTargets = {
-    trial_staff: ['owner'],
+    trial_staff: ['developer', 'owner'],
     staff: ['owner'],
     senior_staff: ['owner'],
     staff_manager: ['owner'],
@@ -407,6 +415,7 @@ function allowedDeescalationTargetsForRank(actorRank, kind) {
 
 function isMetagamingExempt(member) {
   if (!member) return false;
+  if (canBypassProtectedMentions(member)) return true;
   return ['founder', 'owner', 'co_owner', 'developer', 'head_developer'].some((key) => {
     if (key === 'founder' && isFounderMember(member, member.id)) return true;
     return memberHasAnyRole(member, roleGroupIds(member.guild, key));
@@ -414,6 +423,8 @@ function isMetagamingExempt(member) {
 }
 
 function blockedProtectedMentions(message) {
+  if (canBypassProtectedMentions(message.member)) return [];
+
   const authorKey = memberMentionKey(message.member);
   const blocked = [];
   const mentionedRoleIds = new Set(message.mentions.roles.map((role) => role.id));
@@ -804,11 +815,18 @@ async function dmMetagamingWarning(member) {
 }
 
 function makeManagementMentionLine(guild) {
-  const roleIds = roleGroupIds(guild, 'trial_staff');
+  const roleIds = initialSupportRecipientRoleIds(guild);
   if (roleIds.length) {
-    return `Trial staff: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
+    return `Trial staff and staff: ${roleIds.map((roleId) => `<@&${roleId}>`).join(', ')}`;
   }
-  return 'Trial staff role: not configured';
+  return 'Trial staff/staff roles: not configured';
+}
+
+function initialSupportRecipientRoleIds(guild) {
+  return cleanIdList(
+    roleGroupIds(guild, 'trial_staff').join(','),
+    roleGroupIds(guild, 'staff').join(',')
+  );
 }
 
 function ticketLevelRoleIds(guild, kind, level) {
@@ -870,7 +888,7 @@ function serializeTicketMeta(meta) {
   return parts.join(' | ');
 }
 
-function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank = 'staff') {
+function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank = 'staff', options = {}) {
   const botUserId = cleanId(configuredBotUserId) || client.user.id;
   const botRoleId = cleanId(configuredBotRoleId);
   const ticketLevel = kind === 'bug' && level === 'developer' ? 'developer' : level;
@@ -885,7 +903,11 @@ function buildSupportTicketOverwrites(guild, openerId, kind, level, openerRank =
     overwrites.push({ id: openerId, allow: ticketAllow });
   }
 
-  for (const roleId of ticketLevelRoleIds(guild, kind, ticketLevel)) {
+  const recipientRoleIds = options.includeSupportIntakeRoles && kind === 'support'
+    ? initialSupportRecipientRoleIds(guild)
+    : ticketLevelRoleIds(guild, kind, ticketLevel);
+
+  for (const roleId of recipientRoleIds) {
     overwrites.push({ id: roleId, allow: ticketAllow });
   }
 
@@ -1577,7 +1599,9 @@ async function createPlayerTicket(guild, opener, kind) {
       source: 'player',
       locked: false
     }),
-    permissionOverwrites: buildSupportTicketOverwrites(guild, opener.id, kind, initialLevel, openerRank)
+    permissionOverwrites: buildSupportTicketOverwrites(guild, opener.id, kind, initialLevel, openerRank, {
+      includeSupportIntakeRoles: kind === 'support' && ['trial_staff', 'staff'].includes(initialLevel)
+    })
   };
 
   const categoryId = await resolveTicketCategory(guild).catch((error) => {
@@ -1587,7 +1611,9 @@ async function createPlayerTicket(guild, opener, kind) {
   if (categoryId) channelOptions.parent = categoryId;
 
   const channel = await guild.channels.create(channelOptions);
-  const notifyRoleIds = ticketLevelRoleIds(guild, kind, initialLevel);
+  const notifyRoleIds = kind === 'support' && ['trial_staff', 'staff'].includes(initialLevel)
+    ? initialSupportRecipientRoleIds(guild)
+    : ticketLevelRoleIds(guild, kind, initialLevel);
   const mentions = roleMentionLine(notifyRoleIds);
   await channel.send({
     content: [
