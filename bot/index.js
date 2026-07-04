@@ -55,6 +55,8 @@ const dashboardPublicUrl = (process.env.DASHBOARD_PUBLIC_URL || dashboardUrl || 
 const unovaWelcomeBannerUrl = `${dashboardPublicUrl}/dashboard/assets/unova-welcome-banner.png`;
 const onlineFiveMDiscordIds = new Set();
 const vcDmCooldowns = new Map();
+const guildMemberFetchCache = new Map();
+const guildMemberFetchTtlMs = 60 * 1000;
 const inactiveReminderAfterMs = 48 * 60 * 60 * 1000;
 const inactiveReminderCloseAfterMs = 6 * 60 * 60 * 1000;
 const inactiveReminderNoResponseAfterMs = 2 * 60 * 60 * 1000;
@@ -929,10 +931,35 @@ function roleMentionLine(roleIds) {
   return roleIds.map((roleId) => `<@&${roleId}>`).join(' ');
 }
 
+async function warmGuildMemberCache(guild) {
+  if (!guild) return null;
+  const now = Date.now();
+  const cached = guildMemberFetchCache.get(guild.id);
+  if (cached && cached.expiresAt > now) return cached.promise;
+
+  const promise = guild.members.fetch().catch((error) => {
+    guildMemberFetchCache.delete(guild.id);
+    console.warn(`[Unova Bot] Guild member cache refresh failed: ${error.message}`);
+    return null;
+  });
+  guildMemberFetchCache.set(guild.id, {
+    expiresAt: now + guildMemberFetchTtlMs,
+    promise
+  });
+  return promise;
+}
+
 async function roleIdsHaveMembers(guild, roleIds) {
   const cleanRoleIds = cleanIdList(roleIds.join(','));
   if (!cleanRoleIds.length) return false;
-  await guild.members.fetch().catch(() => null);
+
+  const hasCachedMembers = cleanRoleIds.some((roleId) => {
+    const role = guild.roles.cache.get(roleId);
+    return role && role.members.size > 0;
+  });
+  if (hasCachedMembers) return true;
+
+  await warmGuildMemberCache(guild);
   return cleanRoleIds.some((roleId) => {
     const role = guild.roles.cache.get(roleId);
     return role && role.members.size > 0;
@@ -1690,33 +1717,41 @@ async function claimTicket(channel, guild, member, user) {
   }
 
   const nextMeta = { ...meta, level: claimLevel, claimed: user.id };
-  await channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null);
-  await channel.permissionOverwrites.set(
-    buildSupportTicketOverwrites(guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
-  ).catch(() => null);
-  const opener = meta.opener ? await guild.members.fetch(meta.opener).catch(() => null) : null;
-  const openerName = opener?.displayName || meta.opener || 'ticket';
   const staffName = member?.displayName || user.username;
-  await channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
-  await channel.send({
-    content: `Ticket claimed by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
-    embeds: [ticketStatusEmbed(meta.kind, claimLevel, user.id)],
-    components: ticketButtons(meta.kind, meta.locked === 'true'),
-    allowedMentions: { users: [user.id], roles: [] }
-  }).catch(() => null);
-  await postDashboardInternal('/internal/tickets/upsert', {
+  const openerPromise = meta.opener ? guild.members.fetch(meta.opener).catch(() => null) : Promise.resolve(null);
+  const updatePromises = [
+    channel.setTopic(serializeTicketMeta(nextMeta)).catch(() => null),
+    channel.permissionOverwrites.set(
+      buildSupportTicketOverwrites(guild, meta.opener, meta.kind, claimLevel, meta.openerRank)
+    ).catch(() => null),
+    channel.send({
+      content: `Ticket claimed by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`,
+      embeds: [ticketStatusEmbed(meta.kind, claimLevel, user.id)],
+      components: ticketButtons(meta.kind, meta.locked === 'true'),
+      allowedMentions: { users: [user.id], roles: [] }
+    }).catch(() => null)
+  ];
+
+  const opener = await openerPromise;
+  const openerName = opener?.displayName || meta.opener || 'ticket';
+  const nextChannelName = makeClaimedTicketName(openerName, staffName);
+  updatePromises.push(channel.setName(nextChannelName).catch(() => null));
+  await Promise.all(updatePromises);
+
+  postDashboardInternal('/internal/tickets/upsert', {
     id: channel.id,
     channelId: channel.id,
     guildId: guild.id,
-    channelName: channel.name,
+    channelName: nextChannelName,
     kind: meta.kind,
     level: claimLevel,
     openerId: meta.opener,
     source: meta.source || 'discord',
     locked: meta.locked === 'true',
     status: 'open'
-  });
-  await logToStaff(`Ticket claimed: <#${channel.id}> by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`);
+  }).catch((error) => console.warn(`[Unova Bot] Ticket dashboard claim sync failed: ${error.message}`));
+  logToStaff(`Ticket claimed: <#${channel.id}> by <@${user.id}> at ${ticketLevelLabels[claimLevel] || claimLevel}.`)
+    .catch((error) => console.warn(`[Unova Bot] Ticket claim log failed: ${error.message}`));
   return { ok: true, message: `Claimed at ${ticketLevelLabels[claimLevel] || claimLevel}.` };
 }
 
@@ -1755,54 +1790,65 @@ async function moveTicketLevel(channel, meta, nextLevel, actor, nextKind = meta.
   const nextMeta = { ...meta, kind: nextKind, level: nextLevel };
   if (releaseClaim) nextMeta.claimed = 'none';
   if (options.claimedBy) nextMeta.claimed = options.claimedBy;
-  await channel.setTopic(serializeTicketMeta(nextMeta));
-  await channel.permissionOverwrites.set(
-    buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel, meta.openerRank)
-  );
 
   const roleIds = ticketLevelRoleIds(channel.guild, nextKind, nextLevel);
   const mentions = roleMentionLine(roleIds);
   const statusClaimedBy = releaseClaim
     ? null
     : options.claimedBy || (meta.claimed && meta.claimed !== 'none' ? meta.claimed : null);
-  await channel.send({
-    content: [
-      mentions,
-      options.actionText || `Ticket escalated by <@${actor.id}>.`,
-      `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
-    ].filter(Boolean).join('\n'),
-    embeds: [
-      ...(options.attentionEmbed ? [options.attentionEmbed] : []),
-      ticketStatusEmbed(nextKind, nextLevel, statusClaimedBy)
-    ],
-    components: ticketButtons(nextKind, meta.locked === 'true'),
-    allowedMentions: { parse: ['roles', 'users'] }
-  });
+  const updatePromises = [
+    channel.setTopic(serializeTicketMeta(nextMeta)),
+    channel.permissionOverwrites.set(
+      buildSupportTicketOverwrites(channel.guild, meta.opener, nextKind, nextLevel, meta.openerRank)
+    ),
+    channel.send({
+      content: [
+        mentions,
+        options.actionText || `Ticket escalated by <@${actor.id}>.`,
+        `Current level: ${ticketLevelLabels[nextLevel] || nextLevel}.`
+      ].filter(Boolean).join('\n'),
+      embeds: [
+        ...(options.attentionEmbed ? [options.attentionEmbed] : []),
+        ticketStatusEmbed(nextKind, nextLevel, statusClaimedBy)
+      ],
+      components: ticketButtons(nextKind, meta.locked === 'true'),
+      allowedMentions: { parse: ['roles', 'users'] }
+    })
+  ].map((promise) => promise.catch((error) => {
+    console.warn(`[Unova Bot] Ticket level update step failed in ${channel.id}: ${error.message}`);
+    return null;
+  }));
 
+  let nextChannelName = channel.name;
   if (releaseClaim || options.claimedBy) {
-    const opener = meta.opener ? await channel.guild.members.fetch(meta.opener).catch(() => null) : null;
-    const openerName = opener?.displayName || meta.opener || 'ticket';
-    if (options.claimedBy) {
-      const claimant = await channel.guild.members.fetch(options.claimedBy).catch(() => null);
+    const openerPromise = meta.opener ? channel.guild.members.fetch(meta.opener).catch(() => null) : Promise.resolve(null);
+    const claimantPromise = options.claimedBy ? channel.guild.members.fetch(options.claimedBy).catch(() => null) : Promise.resolve(null);
+    updatePromises.push(Promise.all([openerPromise, claimantPromise]).then(([opener, claimant]) => {
+      const openerName = opener?.displayName || meta.opener || 'ticket';
+      if (!options.claimedBy) {
+        nextChannelName = makeAttentionTicketName(openerName, nextLevel);
+        return channel.setName(nextChannelName).catch(() => null);
+      }
       const staffName = claimant?.displayName || actor.username || actor.id;
-      await channel.setName(makeClaimedTicketName(openerName, staffName)).catch(() => null);
-    } else {
-      await channel.setName(makeAttentionTicketName(openerName, nextLevel)).catch(() => null);
-    }
+      nextChannelName = makeClaimedTicketName(openerName, staffName);
+      return channel.setName(nextChannelName).catch(() => null);
+    }));
   }
 
-  await postDashboardInternal('/internal/tickets/upsert', {
+  await Promise.all(updatePromises);
+
+  postDashboardInternal('/internal/tickets/upsert', {
     id: channel.id,
     channelId: channel.id,
     guildId: channel.guild.id,
-    channelName: channel.name,
+    channelName: nextChannelName,
     kind: nextKind,
     level: nextLevel,
     openerId: meta.opener,
     source: meta.source || 'discord',
     locked: meta.locked === 'true',
     status: 'open'
-  });
+  }).catch((error) => console.warn(`[Unova Bot] Ticket dashboard level sync failed: ${error.message}`));
 }
 
 async function handleTicketEscalation(interaction, forcedLevel = null) {
@@ -1815,25 +1861,25 @@ async function handleTicketEscalation(interaction, forcedLevel = null) {
     return interaction.reply({ content: 'Your current role cannot escalate this ticket.', flags: MessageFlags.Ephemeral });
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   if (!forcedLevel) {
     const panel = await ticketEscalationPanel(interaction.guild, interaction.member, meta);
     if (!panel) {
-      return interaction.reply({ content: 'There are no available escalation options for your role right now.', flags: MessageFlags.Ephemeral });
+      return interaction.editReply('There are no available escalation options for your role right now.');
     }
 
-    return interaction.reply({
+    return interaction.editReply({
       content: 'Choose who this ticket needs attention from.',
-      components: [panel],
-      flags: MessageFlags.Ephemeral
+      components: [panel]
     });
   }
 
   const nextLevel = forcedLevel || await nextAvailableTicketLevel(interaction.guild, meta.kind, meta.level);
   if (!nextLevel) {
-    return interaction.reply({ content: 'This ticket is already at the highest level.', flags: MessageFlags.Ephemeral });
+    return interaction.editReply('This ticket is already at the highest level.');
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const nextKind = forcedLevel === 'staff' ? 'support' : meta.kind;
   const actorRank = leadershipRank(interaction.member, interaction.user.id);
   const staffEscalation = !forcedLevel && meta.kind === 'support' && actorRank === 'staff';
@@ -1855,12 +1901,12 @@ async function handleTicketEscalationSelection(interaction) {
   }
 
   const nextLevel = interaction.values[0];
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const availableOptions = await escalationOptionsForMember(interaction.guild, interaction.member, meta);
   if (!availableOptions.some((option) => option.value === nextLevel)) {
-    return interaction.reply({ content: 'That escalation option is not available for your role.', flags: MessageFlags.Ephemeral });
+    return interaction.editReply('That escalation option is not available for your role.');
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const actorRank = leadershipRank(interaction.member, interaction.user.id);
   const staffEscalation = meta.kind === 'support' && ['trial_staff', 'staff'].includes(actorRank);
   await moveTicketLevel(interaction.channel, meta, nextLevel, interaction.user, meta.kind, {
@@ -1880,15 +1926,15 @@ async function handleTicketDeescalation(interaction) {
     return interaction.reply({ content: 'Your current role cannot de-escalate this ticket.', flags: MessageFlags.Ephemeral });
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const panel = await ticketDeescalationPanel(interaction.member, meta);
   if (!panel) {
-    return interaction.reply({ content: 'There are no available de-escalation options for your role right now.', flags: MessageFlags.Ephemeral });
+    return interaction.editReply('There are no available de-escalation options for your role right now.');
   }
 
-  return interaction.reply({
+  return interaction.editReply({
     content: 'Choose where this ticket should be moved down to.',
-    components: [panel],
-    flags: MessageFlags.Ephemeral
+    components: [panel]
   });
 }
 
@@ -1903,12 +1949,12 @@ async function handleTicketDeescalationSelection(interaction) {
   }
 
   const previousLevel = interaction.values[0];
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const availableOptions = await deescalationOptionsForMember(interaction.member, meta);
   if (!availableOptions.some((option) => option.value === previousLevel)) {
-    return interaction.reply({ content: 'That de-escalation option is not available for your role.', flags: MessageFlags.Ephemeral });
+    return interaction.editReply('That de-escalation option is not available for your role.');
   }
 
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await moveTicketLevel(interaction.channel, meta, previousLevel, interaction.user, meta.kind, {
     releaseClaim: true,
     actionText: `Ticket de-escalated by <@${interaction.user.id}> and marked unclaimed.`
@@ -1951,6 +1997,7 @@ async function handleTicketOverride(interaction) {
     return interaction.editReply(`Override granted. Ticket is now at ${ticketLevelLabels[overrideLevel] || overrideLevel}.`);
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await interaction.channel.permissionOverwrites.edit(interaction.user.id, {
     ViewChannel: true,
     SendMessages: true,
@@ -1958,7 +2005,7 @@ async function handleTicketOverride(interaction) {
     AttachFiles: true,
     EmbedLinks: true
   });
-  await interaction.reply({ content: `Override granted to ${interaction.user}.` });
+  await interaction.editReply({ content: `Override granted to ${interaction.user}.` });
 }
 
 async function createManagementTicket(guild, options) {
