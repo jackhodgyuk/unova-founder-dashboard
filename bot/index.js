@@ -385,7 +385,7 @@ function canMentionProtected(authorKey, targetKey) {
 function allowedEscalationTargetsForRank(actorRank, kind) {
   const supportTargets = {
     trial_staff: ['developer', 'owner'],
-    staff: ['owner'],
+    staff: ['developer', 'owner'],
     senior_staff: ['owner'],
     staff_manager: ['owner'],
     server_manager: ['owner'],
